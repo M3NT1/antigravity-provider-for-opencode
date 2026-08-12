@@ -1,5 +1,2 @@
 [test]
-preload = []
-
-[test.env]
-NODE_ENV = "test"
+env = { NODE_ENV = "test" }
