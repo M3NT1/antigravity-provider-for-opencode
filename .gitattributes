@@ -1,0 +1,6 @@
+* text=auto eol=lf
+*.ts linguist-language=TypeScript
+*.tsx linguist-language=TypeScript
+*.js linguist-language=JavaScript
+*.md linguist-documentation
+LICENSE linguist-detectable=false

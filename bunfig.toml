@@ -1,0 +1,5 @@
+[test]
+preload = []
+
+[test.env]
+NODE_ENV = "test"

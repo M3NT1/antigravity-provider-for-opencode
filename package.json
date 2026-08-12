@@ -1,0 +1,55 @@
+{
+  "name": "antigravity-provider-for-opencode",
+  "version": "0.1.0",
+  "type": "module",
+  "license": "Apache-2.0",
+  "description": "Opencode plugin that exposes the Google Antigravity CLI (agy) as a multi-provider via OAuth subscription",
+  "author": "m3nt1",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/m3nt1/antigravity-provider-for-opencode.git"
+  },
+  "bugs": {
+    "url": "https://github.com/m3nt1/antigravity-provider-for-opencode/issues"
+  },
+  "homepage": "https://github.com/m3nt1/antigravity-provider-for-opencode#readme",
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "antigravity",
+    "agy",
+    "google",
+    "gemini",
+    "claude",
+    "gpt-oss",
+    "ai-sdk",
+    "subscription"
+  ],
+  "scripts": {
+    "typecheck": "tsgo --noEmit",
+    "test": "bun test",
+    "build": "tsc",
+    "lint": "oxlint"
+  },
+  "dependencies": {
+    "@opencode-ai/core": "workspace:*",
+    "@opencode-ai/plugin": "workspace:*",
+    "@opencode-ai/sdk": "workspace:*"
+  },
+  "devDependencies": {
+    "@tsconfig/node22": "catalog:",
+    "@types/bun": "catalog:",
+    "typescript": "catalog:",
+    "@typescript/native-preview": "catalog:",
+    "oxlint": "catalog:"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "SECURITY.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  }
+}
