@@ -1,0 +1,169 @@
+import { describe, expect, it, beforeEach, afterEach } from "bun:test"
+import fs from "node:fs"
+import os from "node:os"
+import path from "path"
+
+import { AntigravityProviderPlugin } from "../src/auth.js"
+import { AgyNotInstalledError, AgyAuthMissingError } from "../src/errors.js"
+
+// macOS os.homedir() reads from the system passwd database (not HOME),
+// so we must override it directly for tests that need a fake home
+// directory. We save/restore the original function on each test.
+const originalHomedir = os.homedir
+function mockHomedir(home: string) {
+  ;(os as { homedir: () => string }).homedir = () => home
+}
+afterEach(() => {
+  mockHomedir(originalHomedir())
+  delete process.env["HOME"]
+  delete process.env["PATH"]
+})
+
+// ===== Helpers =====
+
+function makeExecutable(filePath: string) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true })
+  // The mock responds to `--version` with a parseable version string
+  // (matches the real agy output: "Antigravity CLI X.Y.Z"). Without
+  // a version string, the preflight verifyVersion() throws.
+  fs.writeFileSync(filePath, "#!/bin/sh\n[ \"$1\" = \"--version\" ] && echo \"Antigravity CLI 99.0.0\" || echo ok\n")
+  fs.chmodSync(filePath, 0o755)
+}
+
+let tmpHome: string
+beforeEach(() => {
+  tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "agy-auth-"))
+})
+afterEach(() => {
+  fs.rmSync(tmpHome, { recursive: true, force: true })
+})
+
+// ===== Tests =====
+
+describe("AntigravityProviderPlugin", () => {
+  it("returns 3 auth methods", async () => {
+    const hooks = await AntigravityProviderPlugin({} as never)
+    expect(hooks.auth?.methods).toHaveLength(3)
+    expect(hooks.auth?.methods.map((m) => m.label)).toEqual([
+      "Install Antigravity CLI",
+      "Sign in with Google",
+      "Use existing antigravity session",
+    ])
+  })
+
+  it("uses the google provider id so it attaches to the existing BUNDLED_PROVIDERS entry", async () => {
+    const hooks = await AntigravityProviderPlugin({} as never)
+    expect(hooks.provider?.id).toBe("google")
+    expect(hooks.auth?.provider).toBe("antigravity")
+  })
+
+  it("registers all 7 Antigravity models when agy is installed", async () => {
+    const bin = path.join(tmpHome, ".local", "bin", "agy")
+    makeExecutable(bin)
+    mockHomedir(tmpHome)
+    const hooks = await AntigravityProviderPlugin({} as never)
+    const result = await hooks.provider!.models!(
+      { id: "google", name: "Google", source: "env", env: [], options: {}, models: {} } as never,
+      { auth: undefined },
+    )
+    const slugs = Object.keys(result as Record<string, unknown>)
+    expect(slugs).toContain("gemini-3.6-flash-high")
+    expect(slugs).toContain("gemini-3.6-flash-medium")
+    expect(slugs).toContain("gemini-3.5-flash-medium")
+    expect(slugs).toContain("gemini-3.1-pro-high")
+    expect(slugs).toContain("claude-sonnet-4-6")
+    expect(slugs).toContain("claude-opus-4-6")
+    expect(slugs).toContain("gpt-oss-120b-medium")
+  })
+
+  it("returns an empty model list when agy is not installed (graceful degrade)", async () => {
+    mockHomedir(tmpHome)
+    process.env["PATH"] = "/nonexistent"
+    const hooks = await AntigravityProviderPlugin({} as never)
+    const result = await hooks.provider!.models!(
+      { id: "google", name: "Google", source: "env", env: [], options: {}, models: {} } as never,
+      { auth: undefined },
+    )
+    expect(result).toEqual({})
+  })
+
+  it("auth.loader throws AgyNotInstalledError when agy is missing", async () => {
+    mockHomedir(tmpHome)
+    process.env["PATH"] = "/nonexistent"
+    const hooks = await AntigravityProviderPlugin({} as never)
+    const loader = hooks.auth!.loader!
+    await expect(loader(async () => ({}), {} as never)).rejects.toBeInstanceOf(AgyNotInstalledError)
+  })
+
+  it("auth.loader throws AgyNotInstalledError with the install command in the message", async () => {
+    mockHomedir(tmpHome)
+    process.env["PATH"] = "/nonexistent"
+    const hooks = await AntigravityProviderPlugin({} as never)
+    const loader = hooks.auth!.loader!
+    try {
+      await loader(async () => ({}), {} as never)
+      throw new Error("expected to throw")
+    } catch (err) {
+      expect(err).toBeInstanceOf(AgyNotInstalledError)
+      expect((err as AgyNotInstalledError).message).toContain(
+        "curl -fsSL https://antigravity.google/cli/install.sh",
+      )
+    }
+  })
+
+  it("auth.loader throws AgyAuthMissingError when no auth is configured", async () => {
+    const bin = path.join(tmpHome, ".local", "bin", "agy")
+    makeExecutable(bin)
+    mockHomedir(tmpHome)
+    const hooks = await AntigravityProviderPlugin({} as never)
+    const loader = hooks.auth!.loader!
+    await expect(loader(async () => undefined, {} as never)).rejects.toBeInstanceOf(AgyAuthMissingError)
+  })
+
+  it("auth.loader returns a fetch override when agy is present", async () => {
+    const bin = path.join(tmpHome, ".local", "bin", "agy")
+    makeExecutable(bin)
+    mockHomedir(tmpHome)
+    const hooks = await AntigravityProviderPlugin({} as never)
+    const loader = hooks.auth!.loader!
+    const options = await loader(async () => ({ type: "oauth" }), {} as never)
+    expect(options.apiKey).toBe("_antigravity_placeholder_")
+    expect(typeof options.fetch).toBe("function")
+  })
+
+  it("fetch override strips Authorization and x-goog-api-key headers", async () => {
+    const bin = path.join(tmpHome, ".local", "bin", "agy")
+    makeExecutable(bin)
+    mockHomedir(tmpHome)
+    const hooks = await AntigravityProviderPlugin({} as never)
+    const loader = hooks.auth!.loader!
+    const options = await loader(async () => ({ type: "oauth" }), {} as never)
+    const headers = new Headers({
+      Authorization: "Bearer secret",
+      "x-goog-api-key": "secret",
+      "Content-Type": "application/json",
+    })
+    const response = await options.fetch!(
+      "https://generativelanguage.googleapis.com/v1beta/models/foo:countTokens",
+      { method: "POST", headers, body: "{}" },
+    )
+    expect(headers.has("authorization")).toBe(false)
+    expect(headers.has("x-goog-api-key")).toBe(false)
+    expect(headers.has("Content-Type")).toBe(true)
+    expect(response.status).toBe(404)
+  })
+
+  it("fetch override returns 404 for non-model URLs (let it fall through)", async () => {
+    const bin = path.join(tmpHome, ".local", "bin", "agy")
+    makeExecutable(bin)
+    mockHomedir(tmpHome)
+    const hooks = await AntigravityProviderPlugin({} as never)
+    const loader = hooks.auth!.loader!
+    const options = await loader(async () => ({ type: "oauth" }), {} as never)
+    const response = await options.fetch!(
+      "https://generativelanguage.googleapis.com/v1beta/models",
+      { method: "GET" },
+    )
+    expect(response.status).toBe(404)
+  })
+})

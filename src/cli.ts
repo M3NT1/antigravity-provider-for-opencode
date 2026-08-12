@@ -3,7 +3,7 @@ import os from "node:os"
 import path from "path"
 
 import { AGY_DEFAULT_PATH, installInstructionsForPlatform } from "./constants.js"
-import type { SpawnFn } from "./spawn.js"
+import { defaultSpawn, type SpawnFn } from "./spawn.js"
 import { AgyNotInstalledError } from "./errors.js"
 
 // Locate the agy binary. Strategy:
@@ -112,4 +112,5 @@ export async function preflight(
   return { binary, version }
 }
 
-export { AGY_DEFAULT_PATH }
+export { AGY_DEFAULT_PATH, defaultSpawn }
+export type { SpawnFn } from "./spawn.js"
