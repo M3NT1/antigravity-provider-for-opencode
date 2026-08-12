@@ -20,6 +20,15 @@ describe("MODEL_BY_SLUG", () => {
     expect(model.providerID).toBe(PROVIDER_ID)
   })
 
+  it.each(ALL_SLUGS)("%s has api.npm pointing to a BUNDLED_PROVIDERS entry", (slug) => {
+    const model = MODEL_BY_SLUG[slug]
+    // The plugin attaches to the @ai-sdk/google SDK and overrides its
+    // fetch. The api.npm field MUST match a BUNDLED_PROVIDERS key or
+    // opencode's model initializer falls through to Npm.add(), which
+    // fails for non-existent packages and throws InitError.
+    expect(model.api.npm).toBe("@ai-sdk/google")
+  })
+
   it.each(ALL_SLUGS)("%s has cost = 0 (subscription-billed)", (slug) => {
     const model = MODEL_BY_SLUG[slug]
     expect(model.cost.input).toBe(0)

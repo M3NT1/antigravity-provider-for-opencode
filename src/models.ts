@@ -7,11 +7,11 @@ import type { ModelEntry, ModelSlug } from "./types.js"
 //
 // Reasoning-capable models have `capabilities.reasoning: true`.
 //
-// The `npm` field is opaque to opencode (the plugin runs through the
-// ai-sdk LanguageModelV3 contract directly, not via an npm package),
-// but the schema requires it; we set it to a sentinel so the opencode
-// model picker knows this is a custom plugin-served model.
-const SENTRY_NPM = "@opencode-ai/antigravity-provider/agy"
+// api.npm MUST point to a BUNDLED_PROVIDERS entry. The plugin attaches
+// to @ai-sdk/google and overrides its fetch — the SDK factory is
+// happy as long as the package resolves. The "id" field is the slug
+// the agy CLI expects; the "url" is empty (we don't make HTTP calls).
+const AI_SDK_GOOGLE_NPM = "@ai-sdk/google"
 
 const TEXT_MODALITY = { text: true, audio: false, image: false, video: false, pdf: false }
 const IMAGE_MODALITY = { text: true, audio: false, image: true, video: false, pdf: false }
@@ -22,7 +22,7 @@ export const MODEL_BY_SLUG: Record<ModelSlug, ModelEntry> = {
     providerID: PROVIDER_ID,
     name: "Gemini 3.6 Flash (High)",
     family: "gemini-flash",
-    api: { id: "gemini-3.6-flash-high", url: "", npm: SENTRY_NPM },
+    api: { id: "gemini-3.6-flash-high", url: "", npm: AI_SDK_GOOGLE_NPM },
     status: "active",
     capabilities: {
       temperature: true,
@@ -45,7 +45,7 @@ export const MODEL_BY_SLUG: Record<ModelSlug, ModelEntry> = {
     providerID: PROVIDER_ID,
     name: "Gemini 3.6 Flash (Medium)",
     family: "gemini-flash",
-    api: { id: "gemini-3.6-flash-medium", url: "", npm: SENTRY_NPM },
+    api: { id: "gemini-3.6-flash-medium", url: "", npm: AI_SDK_GOOGLE_NPM },
     status: "active",
     capabilities: {
       temperature: true,
@@ -68,7 +68,7 @@ export const MODEL_BY_SLUG: Record<ModelSlug, ModelEntry> = {
     providerID: PROVIDER_ID,
     name: "Gemini 3.5 Flash (Medium)",
     family: "gemini-flash",
-    api: { id: "gemini-3.5-flash-medium", url: "", npm: SENTRY_NPM },
+    api: { id: "gemini-3.5-flash-medium", url: "", npm: AI_SDK_GOOGLE_NPM },
     status: "active",
     capabilities: {
       temperature: true,
@@ -91,7 +91,7 @@ export const MODEL_BY_SLUG: Record<ModelSlug, ModelEntry> = {
     providerID: PROVIDER_ID,
     name: "Gemini 3.1 Pro (High)",
     family: "gemini-pro",
-    api: { id: "gemini-3.1-pro-high", url: "", npm: SENTRY_NPM },
+    api: { id: "gemini-3.1-pro-high", url: "", npm: AI_SDK_GOOGLE_NPM },
     status: "active",
     capabilities: {
       temperature: true,
@@ -114,7 +114,7 @@ export const MODEL_BY_SLUG: Record<ModelSlug, ModelEntry> = {
     providerID: PROVIDER_ID,
     name: "Claude Sonnet 4.6 (Thinking)",
     family: "claude-sonnet",
-    api: { id: "claude-sonnet-4-6", url: "", npm: SENTRY_NPM },
+    api: { id: "claude-sonnet-4-6", url: "", npm: AI_SDK_GOOGLE_NPM },
     status: "active",
     capabilities: {
       temperature: true,
@@ -137,7 +137,7 @@ export const MODEL_BY_SLUG: Record<ModelSlug, ModelEntry> = {
     providerID: PROVIDER_ID,
     name: "Claude Opus 4.6 (Thinking)",
     family: "claude-opus",
-    api: { id: "claude-opus-4-6", url: "", npm: SENTRY_NPM },
+    api: { id: "claude-opus-4-6", url: "", npm: AI_SDK_GOOGLE_NPM },
     status: "active",
     capabilities: {
       temperature: true,
@@ -160,7 +160,7 @@ export const MODEL_BY_SLUG: Record<ModelSlug, ModelEntry> = {
     providerID: PROVIDER_ID,
     name: "GPT-OSS 120B (Medium)",
     family: "gpt-oss",
-    api: { id: "gpt-oss-120b-medium", url: "", npm: SENTRY_NPM },
+    api: { id: "gpt-oss-120b-medium", url: "", npm: AI_SDK_GOOGLE_NPM },
     status: "active",
     capabilities: {
       temperature: true,
