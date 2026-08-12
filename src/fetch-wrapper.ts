@@ -19,63 +19,59 @@ import { AgyParseError, AgySpawnError } from "./errors.js"
 import { MODEL_BY_SLUG } from "./models.js"
 import type { ModelSlug } from "./types.js"
 
-// The OpenAI-compatible SSE chunk shape the AI SDK consumes. The
-// standard format is:
+// The Google Generative Language API streaming response format (used by
+// the @ai-sdk/google provider). Each SSE event is a JSON object:
 //
-//   data: {"choices":[{"delta":{"content":"..."}}]}\n\n
-//   data: [DONE]\n\n
+//   data: {"candidates":[{"content":{"parts":[{"text":"Hello"}],"role":"model"}}]}\n\n
 //
-// We emit each agy text_delta as one chunk with a stable object id
-// so the AI SDK can stitch the stream together. The chunk shape
-// mirrors what chooseProxy() in @ai-sdk/openai-compatible expects.
-function sseChunk(objectId: string, modelId: string, delta: string): Uint8Array {
+// The stream closes when an event with empty candidates and
+// usageMetadata arrives. We emit one chunk per agy text_delta plus a
+// final chunk with finishReason="STOP" and usageMetadata.
+function sseChunk(modelId: string, delta: string): Uint8Array {
   return new TextEncoder().encode(
     `data: ${JSON.stringify({
-      id: objectId,
-      object: "chat.completion.chunk",
-      created: Math.floor(Date.now() / 1000),
-      model: modelId,
-      choices: [{ index: 0, delta: { content: delta }, finish_reason: null }],
+      candidates: [
+        {
+          content: {
+            parts: [{ text: delta }],
+            role: "model",
+          },
+        },
+      ],
+      modelVersion: modelId,
     })}\n\n`,
   )
 }
 
-function sseUsageChunk(objectId: string, modelId: string, usage: {
+function sseFinalChunk(modelId: string, usage: {
   input: number
   output: number
   reasoning?: number
 }): Uint8Array {
   return new TextEncoder().encode(
     `data: ${JSON.stringify({
-      id: objectId,
-      object: "chat.completion.chunk",
-      created: Math.floor(Date.now() / 1000),
-      model: modelId,
-      choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
-      usage: {
-        prompt_tokens: usage.input,
-        completion_tokens: usage.output,
-        total_tokens: usage.input + usage.output,
-        completion_tokens_details: usage.reasoning
-          ? { reasoning_tokens: usage.reasoning }
-          : undefined,
+      candidates: [
+        {
+          content: { parts: [{ text: "" }], role: "model" },
+          finishReason: "STOP",
+          index: 0,
+        },
+      ],
+      modelVersion: modelId,
+      usageMetadata: {
+        promptTokenCount: usage.input,
+        candidatesTokenCount: usage.output,
+        thoughtsTokenCount: usage.reasoning ?? 0,
+        totalTokenCount: usage.input + usage.output,
       },
     })}\n\n`,
   )
 }
 
-function sseDone(): Uint8Array {
-  return new TextEncoder().encode("data: [DONE]\n\n")
-}
-
 function sseError(message: string): Uint8Array {
   return new TextEncoder().encode(
     `data: ${JSON.stringify({
-      object: "error",
-      message,
-      type: "agy_spawn_error",
-      param: null,
-      code: null,
+      error: { code: 500, message, status: "INTERNAL" },
     })}\n\n`,
   )
 }
@@ -101,7 +97,6 @@ export type SpawnAgyOptions = {
 export function spawnAgyStream(opts: SpawnAgyOptions): Response {
   const slug = opts.slug
   const modelId = slug
-  const objectId = `chatcmpl-${Math.random().toString(36).slice(2, 10)}`
 
   const child = (opts.spawnFn ?? defaultSpawn)(
     opts.binary,
@@ -153,19 +148,18 @@ export function spawnAgyStream(opts: SpawnAgyOptions): Response {
             if (parsed.event === "step_update") {
               const delta = parsed.step_update.text_delta
               if (delta && parsed.step_update.state === "DONE") {
-                emit(sseChunk(objectId, modelId, delta))
+                emit(sseChunk(modelId, delta))
               }
               continue
             }
 
             if (parsed.event === "result") {
               if (parsed.result.status === "SUCCESS") {
-                emit(sseUsageChunk(objectId, modelId, {
+                emit(sseFinalChunk(modelId, {
                   input: parsed.result.usage?.input_tokens ?? 0,
                   output: parsed.result.usage?.output_tokens ?? 0,
                   reasoning: parsed.result.usage?.thinking_tokens,
                 }))
-                emit(sseDone())
               } else {
                 emit(sseError(parsed.result.error ?? `agy status: ${parsed.result.status}`))
               }

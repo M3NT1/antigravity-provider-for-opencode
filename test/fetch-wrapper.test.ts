@@ -45,7 +45,7 @@ async function readSse(response: Response): Promise<string[]> {
 
 function parseSseData(line: string): unknown {
   const data = line.startsWith("data: ") ? line.slice("data: ".length) : line
-  if (data === "[DONE]") return null
+  if (!data) return null
   return JSON.parse(data)
 }
 
@@ -92,7 +92,7 @@ describe("spawnAgyStream", () => {
     ])
   })
 
-  it("translates step_update text_delta to OpenAI-compatible SSE chunks", async () => {
+  it("translates step_update text_delta to Google-style SSE chunks", async () => {
     const spawnFn = fakeSpawn(
       [
         '{"event":"init","conversation_id":"x","init":{"cwd":"/","tools":[],"permission_mode":"request-review"}}\n',
@@ -111,22 +111,23 @@ describe("spawnAgyStream", () => {
     })
     const lines = await readSse(response)
 
-    // Two text-chunks + one usage-chunk + DONE
-    expect(lines.length).toBe(4)
-    expect(lines[3]).toBe("data: [DONE]")
+    // Two text-chunks + one final usage-chunk
+    expect(lines.length).toBe(3)
 
-    const chunks = lines.slice(0, 3).map(parseSseData)
-    const choiceContent = (chunk: unknown) => {
-      const c = chunk as { choices: Array<{ delta: { content?: string } }> }
-      return c.choices[0].delta.content
+    const chunks = lines.map(parseSseData)
+    const candidateText = (chunk: unknown) => {
+      const c = chunk as { candidates: Array<{ content: { parts: Array<{ text?: string }> } }> }
+      return c.candidates[0].content.parts[0].text
     }
-    expect(choiceContent(chunks[0])).toBe("Hello ")
-    expect(choiceContent(chunks[1])).toBe("world")
+    expect(candidateText(chunks[0])).toBe("Hello ")
+    expect(candidateText(chunks[1])).toBe("world")
 
-    const usage = (chunks[2] as { usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number } }).usage
-    expect(usage.prompt_tokens).toBe(10)
-    expect(usage.completion_tokens).toBe(2)
-    expect(usage.total_tokens).toBe(12)
+    // Final chunk has finishReason=STOP and usageMetadata
+    const final = chunks[2] as { candidates: Array<{ finishReason: string }>; usageMetadata: { promptTokenCount: number; candidatesTokenCount: number; totalTokenCount: number } }
+    expect(final.candidates[0].finishReason).toBe("STOP")
+    expect(final.usageMetadata.promptTokenCount).toBe(10)
+    expect(final.usageMetadata.candidatesTokenCount).toBe(2)
+    expect(final.usageMetadata.totalTokenCount).toBe(12)
   })
 
   it("forwards reasoning_tokens in the usage chunk", async () => {
@@ -146,9 +147,8 @@ describe("spawnAgyStream", () => {
       spawnFn,
     })
     const lines = await readSse(response)
-    const usage = lines[lines.length - 2] // penultimate line is the usage chunk
-    const parsed = JSON.parse(usage.slice("data: ".length))
-    expect(parsed.usage.completion_tokens_details?.reasoning_tokens).toBe(42)
+    const final = JSON.parse(lines[lines.length - 1].slice("data: ".length))
+    expect(final.usageMetadata.thoughtsTokenCount).toBe(42)
   })
 
   it("emits an SSE error chunk when agy status is non-SUCCESS", async () => {
@@ -229,9 +229,10 @@ describe("spawnAgyStream", () => {
       spawnFn,
     })
     const lines = await readSse(response)
-    // Exactly: one DONE chunk + one usage chunk (no text_delta emitted by the unknown event)
-    expect(lines.length).toBe(2)
-    expect(lines[1]).toBe("data: [DONE]")
+    // Exactly one chunk: the final usage chunk (unknown events are silently dropped)
+    expect(lines.length).toBe(1)
+    const parsed = JSON.parse(lines[0].slice("data: ".length)) as { candidates: Array<{ finishReason: string }> }
+    expect(parsed.candidates[0].finishReason).toBe("STOP")
   })
 
   it("strips subscription-only env vars from the spawned env", async () => {
