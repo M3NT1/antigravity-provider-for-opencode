@@ -92,13 +92,13 @@ describe("spawnAgyStream", () => {
     ])
   })
 
-  it("translates step_update text_delta to Google-style SSE chunks", async () => {
+  it("emits the complete result.response as a single SSE chunk with finishReason STOP", async () => {
     const spawnFn = fakeSpawn(
       [
         '{"event":"init","conversation_id":"x","init":{"cwd":"/","tools":[],"permission_mode":"request-review"}}\n',
-        '{"event":"step_update","step_update":{"state":"DONE","text_delta":"Hello ","usage":{}}}\n',
-        '{"event":"step_update","step_update":{"state":"DONE","text_delta":"world","usage":{}}}\n',
-        '{"event":"result","result":{"conversation_id":"x","status":"SUCCESS","response":"Hello world","usage":{"input_tokens":10,"output_tokens":2,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":12}}}\n',
+        '{"event":"step_update","step_update":{"state":"DONE","text_delta":"partial ","usage":{}}}\n',
+        '{"event":"step_update","step_update":{"state":"DONE","text_delta":"fragment","usage":{}}}\n',
+        '{"event":"result","result":{"conversation_id":"x","status":"SUCCESS","response":"Hello world, this is the complete answer.","usage":{"input_tokens":10,"output_tokens":7,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":17}}}\n',
       ],
       "",
       0,
@@ -111,30 +111,27 @@ describe("spawnAgyStream", () => {
     })
     const lines = await readSse(response)
 
-    // Two text-chunks + one final usage-chunk
-    expect(lines.length).toBe(3)
+    // Exactly one chunk: the consolidated result.response text.
+    // The partial step_update fragments are NOT emitted (they may be
+    // out-of-order or truncated by thinking models).
+    expect(lines.length).toBe(1)
 
-    const chunks = lines.map(parseSseData)
-    const candidateText = (chunk: unknown) => {
-      const c = chunk as { candidates: Array<{ content: { parts: Array<{ text?: string }> } }> }
-      return c.candidates[0].content.parts[0].text
+    const chunk = parseSseData(lines[0]) as {
+      candidates: Array<{ content: { parts: Array<{ text?: string }>; role: string }; finishReason: string; index: number }>
+      usageMetadata: { promptTokenCount: number; candidatesTokenCount: number; totalTokenCount: number }
     }
-    expect(candidateText(chunks[0])).toBe("Hello ")
-    expect(candidateText(chunks[1])).toBe("world")
-
-    // Final chunk has finishReason=STOP and usageMetadata
-    const final = chunks[2] as { candidates: Array<{ finishReason: string }>; usageMetadata: { promptTokenCount: number; candidatesTokenCount: number; totalTokenCount: number } }
-    expect(final.candidates[0].finishReason).toBe("STOP")
-    expect(final.usageMetadata.promptTokenCount).toBe(10)
-    expect(final.usageMetadata.candidatesTokenCount).toBe(2)
-    expect(final.usageMetadata.totalTokenCount).toBe(12)
+    expect(chunk.candidates[0].content.parts[0].text).toBe("Hello world, this is the complete answer.")
+    expect(chunk.candidates[0].content.role).toBe("model")
+    expect(chunk.candidates[0].finishReason).toBe("STOP")
+    expect(chunk.usageMetadata.promptTokenCount).toBe(10)
+    expect(chunk.usageMetadata.candidatesTokenCount).toBe(7)
+    expect(chunk.usageMetadata.totalTokenCount).toBe(17)
   })
 
-  it("forwards reasoning_tokens in the usage chunk", async () => {
+  it("forwards reasoning_tokens in the usage metadata", async () => {
     const spawnFn = fakeSpawn(
       [
         '{"event":"init","conversation_id":"x","init":{"cwd":"/","tools":[],"permission_mode":"request-review"}}\n',
-        '{"event":"step_update","step_update":{"state":"DONE","text_delta":"x","usage":{}}}\n',
         '{"event":"result","result":{"conversation_id":"x","status":"SUCCESS","response":"x","usage":{"input_tokens":1,"output_tokens":2,"thinking_tokens":42,"cache_read_tokens":0,"total_tokens":3}}}\n',
       ],
       "",
@@ -147,8 +144,8 @@ describe("spawnAgyStream", () => {
       spawnFn,
     })
     const lines = await readSse(response)
-    const final = JSON.parse(lines[lines.length - 1].slice("data: ".length))
-    expect(final.usageMetadata.thoughtsTokenCount).toBe(42)
+    const chunk = JSON.parse(lines[0].slice("data: ".length))
+    expect(chunk.usageMetadata.thoughtsTokenCount).toBe(42)
   })
 
   it("emits an SSE error chunk when agy status is non-SUCCESS", async () => {
@@ -229,9 +226,11 @@ describe("spawnAgyStream", () => {
       spawnFn,
     })
     const lines = await readSse(response)
-    // Exactly one chunk: the final usage chunk (unknown events are silently dropped)
+    // Exactly one chunk: the consolidated result.response text.
+    // Unknown events are silently dropped.
     expect(lines.length).toBe(1)
-    const parsed = JSON.parse(lines[0].slice("data: ".length)) as { candidates: Array<{ finishReason: string }> }
+    const parsed = JSON.parse(lines[0].slice("data: ".length)) as { candidates: Array<{ content: { parts: Array<{ text?: string }> }; finishReason: string }> }
+    expect(parsed.candidates[0].content.parts[0].text).toBe("ok")
     expect(parsed.candidates[0].finishReason).toBe("STOP")
   })
 

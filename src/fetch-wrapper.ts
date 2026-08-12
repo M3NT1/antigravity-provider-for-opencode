@@ -22,52 +22,14 @@ import type { ModelSlug } from "./types.js"
 // The Google Generative Language API streaming response format (used by
 // the @ai-sdk/google provider). Each SSE event is a JSON object:
 //
-//   data: {"candidates":[{"content":{"parts":[{"text":"Hello"}],"role":"model"}}]}\n\n
+//   data: {"candidates":[{"content":{"parts":[{"text":"..."}],"role":"model"}}]}\n\n
 //
-// The stream closes when an event with empty candidates and
-// usageMetadata arrives. We emit one chunk per agy text_delta plus a
-// final chunk with finishReason="STOP" and usageMetadata.
-function sseChunk(modelId: string, delta: string): Uint8Array {
-  return new TextEncoder().encode(
-    `data: ${JSON.stringify({
-      candidates: [
-        {
-          content: {
-            parts: [{ text: delta }],
-            role: "model",
-          },
-        },
-      ],
-      modelVersion: modelId,
-    })}\n\n`,
-  )
-}
-
-function sseFinalChunk(modelId: string, usage: {
-  input: number
-  output: number
-  reasoning?: number
-}): Uint8Array {
-  return new TextEncoder().encode(
-    `data: ${JSON.stringify({
-      candidates: [
-        {
-          content: { parts: [{ text: "" }], role: "model" },
-          finishReason: "STOP",
-          index: 0,
-        },
-      ],
-      modelVersion: modelId,
-      usageMetadata: {
-        promptTokenCount: usage.input,
-        candidatesTokenCount: usage.output,
-        thoughtsTokenCount: usage.reasoning ?? 0,
-        totalTokenCount: usage.input + usage.output,
-      },
-    })}\n\n`,
-  )
-}
-
+// We emit exactly one chunk: the full text from result.response, with
+// finishReason: "STOP" and usageMetadata embedded. Live streaming from
+// step_update text_delta is intentionally skipped — thinking models
+// split their output across a thinking step and an answer step, and
+// the DONE-state text_delta of the answer step is not always the
+// authoritative full text.
 function sseError(message: string): Uint8Array {
   return new TextEncoder().encode(
     `data: ${JSON.stringify({
@@ -146,20 +108,45 @@ export function spawnAgyStream(opts: SpawnAgyOptions): Response {
             if (!isAgyEvent(parsed)) continue
 
             if (parsed.event === "step_update") {
-              const delta = parsed.step_update.text_delta
-              if (delta && parsed.step_update.state === "DONE") {
-                emit(sseChunk(modelId, delta))
-              }
+              // We intentionally do NOT emit step_update text_delta as
+              // live chunks. Thinking models (e.g. Gemini 3.6 Flash with
+              // reasoning enabled) split the response across a thinking
+              // step and an answer step; the DONE-state text_delta of
+              // the answer step can be partial or out-of-order. The
+              // authoritative full text is in result.response. We wait
+              // for the result event and emit the complete text there.
               continue
             }
 
             if (parsed.event === "result") {
               if (parsed.result.status === "SUCCESS") {
-                emit(sseFinalChunk(modelId, {
-                  input: parsed.result.usage?.input_tokens ?? 0,
-                  output: parsed.result.usage?.output_tokens ?? 0,
-                  reasoning: parsed.result.usage?.thinking_tokens,
-                }))
+                const fullText = parsed.result.response ?? ""
+                // Emit a single text chunk with the complete response
+                // and finishReason: STOP, followed by a second chunk
+                // that carries usageMetadata (the @ai-sdk/google parser
+                // reads both).
+                emit(
+                  new TextEncoder().encode(
+                    `data: ${JSON.stringify({
+                      candidates: [
+                        {
+                          content: { parts: [{ text: fullText }], role: "model" },
+                          finishReason: "STOP",
+                          index: 0,
+                        },
+                      ],
+                      modelVersion: modelId,
+                      usageMetadata: {
+                        promptTokenCount: parsed.result.usage?.input_tokens ?? 0,
+                        candidatesTokenCount: parsed.result.usage?.output_tokens ?? 0,
+                        thoughtsTokenCount: parsed.result.usage?.thinking_tokens ?? 0,
+                        totalTokenCount:
+                          (parsed.result.usage?.input_tokens ?? 0) +
+                          (parsed.result.usage?.output_tokens ?? 0),
+                      },
+                    })}\n\n`,
+                  ),
+                )
               } else {
                 emit(sseError(parsed.result.error ?? `agy status: ${parsed.result.status}`))
               }
