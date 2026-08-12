@@ -67,7 +67,9 @@ describe("AntigravityProviderPlugin", () => {
   it("uses the google provider id so it attaches to the existing BUNDLED_PROVIDERS entry", async () => {
     const hooks = await AntigravityProviderPlugin({} as never)
     expect(hooks.provider?.id).toBe("google")
-    expect(hooks.auth?.provider).toBe("antigravity")
+    // auth.provider MUST match provider.id — otherwise the user
+    // sees the built-in API-key prompt instead of our auth flow.
+    expect(hooks.auth?.provider).toBe("google")
   })
 
   it("registers all 7 Antigravity models when agy is installed", async () => {

@@ -25,6 +25,7 @@
     "ai-sdk",
     "subscription"
   ],
+  "main": "./dist/index.js",
   "scripts": {
     "typecheck": "bash script/typecheck.sh",
     "test": "bun test",

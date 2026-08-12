@@ -43,6 +43,12 @@ import { defaultSpawn } from "./spawn.js"
 // BUNDLED_PROVIDERS via @ai-sdk/google, so opencode's plugin loop
 // accepts the hook. The picker's label is "Google" but the model
 // list is replaced by our 6 Antigravity models.
+//
+// The auth.provider MUST match the provider.id: when the user picks
+// the provider from the list, opencode looks up the auth methods by
+// the provider ID. Mismatching them (e.g. auth.provider="antigravity"
+// while provider.id="google") means the user gets the built-in API
+// key prompt instead of our OAuth flow.
 const ATTACHED_PROVIDER_ID = "google"
 
 // Extract the prompt from a Generative Language API (Vertex-AI-shaped)
@@ -91,7 +97,7 @@ export const AntigravityProviderPlugin = async (_input: PluginInput): Promise<Ho
       },
     },
     auth: {
-      provider: "antigravity",
+      provider: "google",
       methods: [
         {
           label: "Install Antigravity CLI",
