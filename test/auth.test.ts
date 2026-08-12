@@ -5,6 +5,19 @@ import path from "path"
 
 import { AntigravityProviderPlugin } from "../src/auth.js"
 import { AgyNotInstalledError, AgyAuthMissingError } from "../src/errors.js"
+import type { Auth } from "@opencode-ai/sdk/v2"
+
+function fakeAuth(type: "oauth" | "api" = "oauth"): Auth {
+  if (type === "oauth") {
+    return {
+      type: "oauth",
+      refresh: "fake-refresh",
+      access: "fake-access",
+      expires: Date.now() + 3600 * 1000,
+    }
+  }
+  return { type: "api", key: "fake-key" }
+}
 
 // macOS os.homedir() reads from the system passwd database (not HOME),
 // so we must override it directly for tests that need a fake home
@@ -92,7 +105,7 @@ describe("AntigravityProviderPlugin", () => {
     process.env["PATH"] = "/nonexistent"
     const hooks = await AntigravityProviderPlugin({} as never)
     const loader = hooks.auth!.loader!
-    await expect(loader(async () => ({}), {} as never)).rejects.toBeInstanceOf(AgyNotInstalledError)
+    await expect(loader(async () => fakeAuth(), {} as never)).rejects.toBeInstanceOf(AgyNotInstalledError)
   })
 
   it("auth.loader throws AgyNotInstalledError with the install command in the message", async () => {
@@ -101,7 +114,7 @@ describe("AntigravityProviderPlugin", () => {
     const hooks = await AntigravityProviderPlugin({} as never)
     const loader = hooks.auth!.loader!
     try {
-      await loader(async () => ({}), {} as never)
+      await loader(async () => fakeAuth(), {} as never)
       throw new Error("expected to throw")
     } catch (err) {
       expect(err).toBeInstanceOf(AgyNotInstalledError)
@@ -117,7 +130,7 @@ describe("AntigravityProviderPlugin", () => {
     mockHomedir(tmpHome)
     const hooks = await AntigravityProviderPlugin({} as never)
     const loader = hooks.auth!.loader!
-    await expect(loader(async () => undefined, {} as never)).rejects.toBeInstanceOf(AgyAuthMissingError)
+    await expect(loader(async () => undefined as never, {} as never)).rejects.toBeInstanceOf(AgyAuthMissingError)
   })
 
   it("auth.loader returns a fetch override when agy is present", async () => {
@@ -126,7 +139,7 @@ describe("AntigravityProviderPlugin", () => {
     mockHomedir(tmpHome)
     const hooks = await AntigravityProviderPlugin({} as never)
     const loader = hooks.auth!.loader!
-    const options = await loader(async () => ({ type: "oauth" }), {} as never)
+    const options = await loader(async () => fakeAuth(), {} as never)
     expect(options.apiKey).toBe("_antigravity_placeholder_")
     expect(typeof options.fetch).toBe("function")
   })
@@ -137,7 +150,7 @@ describe("AntigravityProviderPlugin", () => {
     mockHomedir(tmpHome)
     const hooks = await AntigravityProviderPlugin({} as never)
     const loader = hooks.auth!.loader!
-    const options = await loader(async () => ({ type: "oauth" }), {} as never)
+    const options = await loader(async () => fakeAuth(), {} as never)
     const headers = new Headers({
       Authorization: "Bearer secret",
       "x-goog-api-key": "secret",
@@ -159,7 +172,7 @@ describe("AntigravityProviderPlugin", () => {
     mockHomedir(tmpHome)
     const hooks = await AntigravityProviderPlugin({} as never)
     const loader = hooks.auth!.loader!
-    const options = await loader(async () => ({ type: "oauth" }), {} as never)
+    const options = await loader(async () => fakeAuth(), {} as never)
     const response = await options.fetch!(
       "https://generativelanguage.googleapis.com/v1beta/models",
       { method: "GET" },

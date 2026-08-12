@@ -17,7 +17,7 @@ function fakeSpawn(
   return (cmd, args, options) => {
     captured.cmd = cmd
     captured.args = args
-    captured.env = options.env
+    captured.env = options.env ?? undefined
     const proc = new EventEmitter() as EventEmitter & {
       stdout: Readable | null
       stderr: Readable | null

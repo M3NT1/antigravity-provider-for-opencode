@@ -74,8 +74,8 @@ describe("locateBinary", () => {
 
 // ===== verifyVersion =====
 
-function fakeStream(text: string): NodeJS.ReadableStream {
-  return Readable.from(Buffer.from(text, "utf8"))
+function fakeStream(text: string): Readable {
+  return Readable.from(Buffer.from(text, "utf8")) as unknown as Readable
 }
 
 function fakeSpawn(stdout: string, stderr: string, code: number | null): SpawnFn {

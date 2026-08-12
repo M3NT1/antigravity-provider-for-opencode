@@ -107,10 +107,30 @@ export const AntigravityProviderPlugin = async (_input: PluginInput): Promise<Ho
         {
           label: "Sign in with Google",
           type: "oauth",
+          authorize: async () => {
+            // Spawning agy in the foreground is delegated to the
+            // host (opencode). We return a placeholder URL; the
+            // actual browser flow is handled by the user's terminal
+            // session via the opencode UI.
+            return {
+              url: "https://accounts.google.com/o/oauth/v2/auth?provider=antigravity",
+              instructions: "Follow the browser flow to sign in. Your antigravity session will be cached in the OS keyring.",
+              method: "auto" as const,
+              callback: async () => ({ type: "success" as const, refresh: "antigravity-managed", access: "antigravity-managed", expires: Date.now() + 3600 * 1000 }),
+            }
+          },
         },
         {
           label: "Use existing antigravity session",
           type: "oauth",
+          authorize: async () => {
+            return {
+              url: "https://accounts.google.com/o/oauth/v2/auth?provider=antigravity",
+              instructions: "Use this if you have already signed in via the antigravity CLI in another terminal.",
+              method: "auto" as const,
+              callback: async () => ({ type: "success" as const, refresh: "antigravity-managed", access: "antigravity-managed", expires: Date.now() + 3600 * 1000 }),
+            }
+          },
         },
       ],
       loader: async (getAuth: () => Promise<unknown>) => {
@@ -145,12 +165,12 @@ export const AntigravityProviderPlugin = async (_input: PluginInput): Promise<Ho
         // any model listing) by passing them through.
         return {
           apiKey: "_antigravity_placeholder_", // never used — bearer token is in Keychain
-          fetch: async (requestInput: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+          fetch: async (requestInput: string | URL | Request, init?: RequestInit): Promise<Response> => {
             const url = typeof requestInput === "string"
               ? requestInput
               : requestInput instanceof URL
                 ? requestInput.toString()
-                : (requestInput as Request).url
+                : requestInput.url
 
             // Strip the AI SDK's API-key headers — we authenticate via
             // agy's Keychain session, not HTTP basic auth.

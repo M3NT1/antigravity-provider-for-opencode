@@ -34,12 +34,17 @@ export const defaultSpawn: SpawnFn = (cmd, args, options) => {
   const [stdin, stdout, stderr] = options.stdio ?? ["ignore", "pipe", "pipe"]
   const child = nodeSpawn(cmd, [...args], {
     cwd: options.cwd,
-    env: options.env === null ? undefined : (options.env ?? process.env),
+    env: options.env === null ? undefined : options.env ? options.env : undefined,
     signal: options.signal,
     timeout: options.timeout,
     windowsHide: options.windowsHide ?? process.platform === "win32",
-    stdio: [stdin, stdout, stderr] as const,
-  })
+    stdio: [stdin, stdout, stderr] as never,
+  }) as unknown as {
+    stdout: Readable | null
+    stderr: Readable | null
+    once: (event: "exit", listener: (code: number | null, signal: NodeJS.Signals | null) => void) => unknown
+    kill: (signal?: NodeJS.Signals) => boolean
+  }
   return {
     stdout: child.stdout,
     stderr: child.stderr,
