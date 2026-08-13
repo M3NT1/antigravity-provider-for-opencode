@@ -17,6 +17,7 @@ export type SpawnOptions = {
   env?: NodeJS.ProcessEnv | null
   signal?: AbortSignal
   timeout?: number
+  killSignal?: NodeJS.Signals
   stdio?: [unknown, "pipe" | "inherit" | "ignore", "pipe" | "inherit" | "ignore"]
   windowsHide?: boolean
 }
@@ -37,6 +38,7 @@ export const defaultSpawn: SpawnFn = (cmd, args, options) => {
     env: options.env === null ? undefined : options.env ? options.env : undefined,
     signal: options.signal,
     timeout: options.timeout,
+    killSignal: options.killSignal,
     windowsHide: options.windowsHide ?? process.platform === "win32",
     stdio: [stdin, stdout, stderr] as never,
   }) as unknown as {

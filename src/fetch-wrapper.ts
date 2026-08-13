@@ -8,7 +8,7 @@
 //
 // This module implements the half of the fetch wrapper that owns the
 // outbound response side: spawn agy, parse its NDJSON, and emit an
-// SSE-formatted HTTP response body that the AI SDK can consume. The
+// SSE-formatted HTTP response that the AI SDK can consume. The
 // caller (auth.ts) is responsible for assembling the rest of the
 // wrapper (URL parsing, prompt extraction, etc.) so that this module
 // stays a pure function of stdin / stdout.
@@ -18,6 +18,40 @@ import { subscriptionOnlyEnv } from "./env.js"
 import { AgyParseError, AgySpawnError } from "./errors.js"
 import { MODEL_BY_SLUG } from "./models.js"
 import type { ModelSlug } from "./types.js"
+
+// Extracted SSE chunk builder for the result event. The same chunk
+// shape is emitted both in the normal loop (line-buffered parse) and
+// in the tail-flush path (after stream end without trailing newline).
+function buildResultChunk(parsed: Extract<AgyEvent, { event: "result" }>, modelId: string): Uint8Array {
+  if (parsed.result.status === "SUCCESS") {
+    const fullText = parsed.result.response ?? ""
+    // Emit a single text chunk with the complete response
+    // and finishReason: STOP, followed by a second chunk
+    // that carries usageMetadata (the @ai-sdk/google parser
+    // reads both).
+    return new TextEncoder().encode(
+      `data: ${JSON.stringify({
+        candidates: [
+          {
+            content: { parts: [{ text: fullText }], role: "model" },
+            finishReason: "STOP",
+            index: 0,
+          },
+        ],
+        modelVersion: modelId,
+        usageMetadata: {
+          promptTokenCount: parsed.result.usage?.input_tokens ?? 0,
+          candidatesTokenCount: parsed.result.usage?.output_tokens ?? 0,
+          thoughtsTokenCount: parsed.result.usage?.thinking_tokens ?? 0,
+          totalTokenCount:
+            (parsed.result.usage?.input_tokens ?? 0) +
+            (parsed.result.usage?.output_tokens ?? 0),
+        },
+      })}\n\n`,
+    )
+  }
+  return sseError(parsed.result.error ?? `agy status: ${parsed.result.status}`)
+}
 
 // The Google Generative Language API streaming response format (used by
 // the @ai-sdk/google provider). Each SSE event is a JSON object:
@@ -41,7 +75,7 @@ function sseError(message: string): Uint8Array {
 export type AgyEvent =
   | { event: "init"; conversation_id: string }
   | { event: "step_update"; step_update: { state: string; text_delta?: string; usage?: { input_tokens?: number; output_tokens?: number; thinking_tokens?: number } } }
-  | { event: "result"; result: { status: string; error?: string; usage?: { input_tokens?: number; output_tokens?: number; thinking_tokens?: number; cache_read_tokens?: number } } }
+  | { event: "result"; result: { status: string; response?: string; error?: string; usage?: { input_tokens?: number; output_tokens?: number; thinking_tokens?: number; cache_read_tokens?: number } } }
 
 function isAgyEvent(value: unknown): value is AgyEvent {
   if (!value || typeof value !== "object") return false
@@ -54,6 +88,11 @@ export type SpawnAgyOptions = {
   prompt: string
   slug: ModelSlug
   spawnFn?: SpawnFn
+  // When the AI SDK caller aborts the request, the signal is forwarded
+  // into the spawn so `agy` is killed via SIGTERM (escalating to SIGKILL
+  // after a grace period — see `controller.error` wiring below). Without
+  // this, the child keeps running until the 5-min timeout.
+  signal?: AbortSignal
 }
 
 export function spawnAgyStream(opts: SpawnAgyOptions): Response {
@@ -67,6 +106,12 @@ export function spawnAgyStream(opts: SpawnAgyOptions): Response {
       stdio: ["ignore", "pipe", "pipe"],
       env: subscriptionOnlyEnv(),
       timeout: 5 * 60 * 1000,
+      // TIMEOUT-001: escalate to SIGKILL if agy traps SIGTERM so the
+      // 5-min timeout actually fires instead of waiting for the
+      // child to voluntarily exit. Per Node docs, killSignal defaults
+      // to "SIGTERM"; the timeout sends that signal at the deadline.
+      killSignal: "SIGKILL",
+      signal: opts.signal,
     },
   )
 
@@ -77,12 +122,41 @@ export function spawnAgyStream(opts: SpawnAgyOptions): Response {
       let buffer = ""
       const decoder = new TextDecoder()
       let finished = false
-      let emittedAnything = false
 
       const emit = (chunk: Uint8Array) => {
         if (finished) return
         controller.enqueue(chunk)
-        emittedAnything = true
+      }
+
+      // Wire the abort signal to the controller so vercel/ai#15430
+      // does not hang the SDK. When the user cancels, we escalate
+      // SIGTERM → SIGKILL after a 5s grace period and surface a real
+      // error to the consumer (rather than silently closing).
+      const sig = opts.signal
+      if (sig) {
+        if (sig.aborted) {
+          child.kill("SIGTERM")
+        } else {
+          const onAbort = () => {
+            child.kill("SIGTERM")
+            setTimeout(() => {
+              try {
+                child.kill("SIGKILL")
+              } catch {
+                /* already gone */
+              }
+              try {
+                controller.error(
+                  new DOMException("The user aborted a request.", "AbortError"),
+                )
+              } catch {
+                /* controller already closed */
+              }
+            }, 5_000)
+            sig.removeEventListener("abort", onAbort)
+          }
+          sig.addEventListener("abort", onAbort, { once: true })
+        }
       }
 
       try {
@@ -119,41 +193,32 @@ export function spawnAgyStream(opts: SpawnAgyOptions): Response {
             }
 
             if (parsed.event === "result") {
-              if (parsed.result.status === "SUCCESS") {
-                const fullText = parsed.result.response ?? ""
-                // Emit a single text chunk with the complete response
-                // and finishReason: STOP, followed by a second chunk
-                // that carries usageMetadata (the @ai-sdk/google parser
-                // reads both).
-                emit(
-                  new TextEncoder().encode(
-                    `data: ${JSON.stringify({
-                      candidates: [
-                        {
-                          content: { parts: [{ text: fullText }], role: "model" },
-                          finishReason: "STOP",
-                          index: 0,
-                        },
-                      ],
-                      modelVersion: modelId,
-                      usageMetadata: {
-                        promptTokenCount: parsed.result.usage?.input_tokens ?? 0,
-                        candidatesTokenCount: parsed.result.usage?.output_tokens ?? 0,
-                        thoughtsTokenCount: parsed.result.usage?.thinking_tokens ?? 0,
-                        totalTokenCount:
-                          (parsed.result.usage?.input_tokens ?? 0) +
-                          (parsed.result.usage?.output_tokens ?? 0),
-                      },
-                    })}\n\n`,
-                  ),
-                )
-              } else {
-                emit(sseError(parsed.result.error ?? `agy status: ${parsed.result.status}`))
-              }
+              emit(buildResultChunk(parsed, modelId))
               finished = true
               controller.close()
               return
             }
+          }
+        }
+
+        // Stream ended. Flush the trailing partial line if agy emitted
+        // a final result event without a trailing newline — per the
+        // NDJSON spec a trailing newline is recommended but not
+        // required, and `agy` has been observed to omit it. Without
+        // this flush the response event is silently dropped and the
+        // user sees "no result event" instead of the actual content.
+        if (!finished && buffer.trim().length > 0) {
+          const tail = buffer.trim()
+          try {
+            const parsed = JSON.parse(tail)
+            if (isAgyEvent(parsed) && parsed.event === "result") {
+              emit(buildResultChunk(parsed, modelId))
+              finished = true
+              controller.close()
+              return
+            }
+          } catch {
+            // fall through to stderr/exit-code error below
           }
         }
 
@@ -193,11 +258,24 @@ export function spawnAgyStream(opts: SpawnAgyOptions): Response {
   })
 }
 
+// Drain stderr with bounded memory:
+//  - tee each chunk to process.stderr so the operator can see live progress
+//  - keep only the last `STDERR_CAPTURE_LIMIT` bytes for the error message
+//  - return the captured tail as a UTF-8 string
+const STDERR_CAPTURE_LIMIT = 4 * 1024
+
 async function drain(stream: NodeJS.ReadableStream | null): Promise<string> {
   if (!stream) return ""
   const chunks: Buffer[] = []
+  let captured = 0
   for await (const chunk of stream) {
-    chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk)
+    const buf = typeof chunk === "string" ? Buffer.from(chunk) : chunk
+    process.stderr.write(buf)
+    if (captured < STDERR_CAPTURE_LIMIT) {
+      const remaining = STDERR_CAPTURE_LIMIT - captured
+      chunks.push(buf.length > remaining ? buf.subarray(0, remaining) : buf)
+      captured += buf.length
+    }
   }
   return Buffer.concat(chunks).toString("utf8")
 }

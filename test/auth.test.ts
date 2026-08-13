@@ -59,8 +59,8 @@ describe("AntigravityProviderPlugin", () => {
     expect(hooks.auth?.methods).toHaveLength(3)
     expect(hooks.auth?.methods.map((m) => m.label)).toEqual([
       "Install Antigravity CLI",
-      "Sign in with Google",
-      "Use existing antigravity session",
+      "Sign in with Google (run `agy` first)",
+      "Use existing Antigravity session",
     ])
   })
 
@@ -180,5 +180,47 @@ describe("AntigravityProviderPlugin", () => {
       { method: "GET" },
     )
     expect(response.status).toBe(404)
+  })
+
+  it("OAuth callback runs preflight to verify agy is runnable before returning marker tokens", async () => {
+    // When the user selects one of the OAuth methods, the callback
+    // must verify that agy is installed and runnable — otherwise the
+    // marker tokens get persisted to auth.json with no working
+    // session backing them, leading to confusing failures at model
+    // load time.
+    const bin = path.join(tmpHome, ".local", "bin", "agy")
+    makeExecutable(bin)
+    mockHomedir(tmpHome)
+    const hooks = await AntigravityProviderPlugin({} as never)
+    const oauthMethods = hooks.auth!.methods.filter((m) => m.type === "oauth")
+    expect(oauthMethods.length).toBe(2)
+    for (const method of oauthMethods) {
+      const result = await method.authorize!({})
+      // The authorize() returns the "auto" branch of the union, but
+      // TypeScript widens to the full union type. Cast to access the
+      // auto-specific callback() arity and the oauth branch's expires.
+      const autoResult = result as Extract<typeof result, { method: "auto" }>
+      const callbackResult = await autoResult.callback()
+      if (callbackResult.type !== "success") throw new Error("expected success")
+      // Narrow to the oauth-success branch (refresh/access/expires) —
+      // the other branch is the api-success (key/metadata).
+      const oauthSuccess = "refresh" in callbackResult ? callbackResult : null
+      expect(oauthSuccess).not.toBeNull()
+      expect(oauthSuccess!.refresh).toBe("antigravity-managed")
+      expect(oauthSuccess!.access).toBe("antigravity-managed")
+      expect(oauthSuccess!.expires).toBeGreaterThan(Date.now() - 5000)
+    }
+  })
+
+  it("OAuth callback throws AgyNotInstalledError when agy is missing", async () => {
+    mockHomedir(tmpHome)
+    process.env["PATH"] = "/nonexistent"
+    const hooks = await AntigravityProviderPlugin({} as never)
+    const oauthMethods = hooks.auth!.methods.filter((m) => m.type === "oauth")
+    for (const method of oauthMethods) {
+      const result = await method.authorize!({})
+      const autoResult = result as Extract<typeof result, { method: "auto" }>
+      await expect(autoResult.callback()).rejects.toBeInstanceOf(AgyNotInstalledError)
+    }
   })
 })

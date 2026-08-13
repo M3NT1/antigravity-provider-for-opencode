@@ -3,8 +3,7 @@ import { EventEmitter } from "node:events"
 import { Readable } from "node:stream"
 
 import { spawnAgyStream } from "../src/fetch-wrapper.js"
-import { AgyParseError, AgySpawnError } from "../src/errors.js"
-import type { SpawnFn, SpawnedProcess } from "../src/spawn.js"
+import type { SpawnFn } from "../src/spawn.js"
 
 // ===== Mock spawn construct =====
 
@@ -282,5 +281,88 @@ describe("spawnAgyStream", () => {
       delete process.env["GOOGLE_GENAI_USE_VERTEXAI"]
       delete process.env["GOOGLE_GENAI_USE_GCA"]
     }
+  })
+
+  it("flushes a trailing partial NDJSON line when the stream ends without a trailing newline", async () => {
+    // Per the NDJSON spec a trailing newline is recommended but not
+    // required. The `agy` CLI has been observed to omit it on the
+    // final result event — without the tail-flush the response is
+    // silently dropped. This test feeds a single result event with no
+    // trailing `\n`.
+    const tailLine =
+      '{"event":"result","result":{"conversation_id":"x","status":"SUCCESS","response":"complete answer","usage":{"input_tokens":3,"output_tokens":2,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":5}}}'
+    const spawnFn = fakeSpawn([tailLine], "", 0)
+    const response = spawnAgyStream({
+      binary: "/x",
+      prompt: "hi",
+      slug: "gemini-3.1-pro-high",
+      spawnFn,
+    })
+    const lines = await readSse(response)
+
+    expect(lines.length).toBe(1)
+    const chunk = parseSseData(lines[0]) as {
+      candidates: Array<{ content: { parts: Array<{ text?: string }>; role: string }; finishReason: string }>
+    }
+    expect(chunk.candidates[0].content.parts[0].text).toBe("complete answer")
+    expect(chunk.candidates[0].finishReason).toBe("STOP")
+  })
+
+  it("falls through to the no-result-event error when the trailing partial line is unparseable", async () => {
+    // A tail line that is not JSON should still report the exit-code
+    // error, not be silently swallowed.
+    const spawnFn = fakeSpawn(["garbage partial line"], "", 1)
+    const response = spawnAgyStream({
+      binary: "/x",
+      prompt: "hi",
+      slug: "gemini-3.1-pro-high",
+      spawnFn,
+    })
+    const lines = await readSse(response)
+    const errorLine = lines.find(
+      (line) => line.includes("non-zero") || line.includes("no result event") || line.includes("exited"),
+    )
+    expect(errorLine).toBeDefined()
+  })
+
+  it("kills the child when the abort signal fires and surfaces an AbortError", async () => {
+    // ABORT-001: when the AI SDK caller cancels the request, the spawn
+    // must forward the abort to the child and the ReadableStream must
+    // surface a real AbortError rather than silently closing (see
+    // vercel/ai#15430).
+    let killedWith: NodeJS.Signals | undefined
+    const spawnFn: SpawnFn = (_cmd, _args, _options) => {
+      const proc = new EventEmitter() as EventEmitter & {
+        stdout: Readable | null
+        stderr: Readable | null
+        kill: (signal?: NodeJS.Signals) => boolean
+      }
+      proc.stdout = Readable.from([])
+      proc.stderr = Readable.from([])
+      proc.kill = (signal?: NodeJS.Signals) => {
+        killedWith = signal
+        return true
+      }
+      return {
+        stdout: proc.stdout,
+        stderr: proc.stderr,
+        exited: new Promise(() => {}),
+        kill: proc.kill,
+      }
+    }
+    const ctrl = new AbortController()
+    const response = spawnAgyStream({
+      binary: "/x",
+      prompt: "hi",
+      slug: "gemini-3.1-pro-high",
+      spawnFn,
+      signal: ctrl.signal,
+    })
+    // Read a byte to ensure the stream starts before we abort.
+    void response.body?.cancel().catch(() => {})
+    ctrl.abort()
+    // Yield to the event loop so the abort listener runs.
+    await new Promise((r) => setTimeout(r, 10))
+    expect(killedWith).toBe("SIGTERM")
   })
 })
