@@ -40,8 +40,8 @@ The `detectLeakedSubscriptionKeys()` helper in `src/env.ts` is available for cal
 
 - **No shell**: the spawn uses `args: [...]` directly, never `shell: true`. No command injection vector.
 - **No env passthrough**: the spawned env is constructed by `subscriptionOnlyEnv()`, which is a fresh clone of `process.env` with the subscription-only keys removed. The `extra` parameter (used only by the install flow) is merged on top.
-- **Timeout**: 5 minutes per spawn (matches the `agy` print-mode default). On timeout, SIGTERM is sent; if the subprocess doesn't exit within 5 seconds, SIGKILL is sent.
-- **AbortSignal propagation**: if the user cancels mid-request (Ctrl+C in opencode), the abort signal is forwarded to `agy` via SIGTERM. The `agy` binary handles SIGTERM gracefully and exits.
+- **Timeout**: 5 minutes per spawn (matches the `agy` print-mode default). We use Node's `spawn({ timeout, killSignal: "SIGKILL" })` so the timeout fires even if `agy` traps SIGTERM.
+- **AbortSignal propagation**: if the user cancels mid-request (Ctrl+C in opencode), the AI SDK's AbortSignal is passed to `spawn()` as the `signal` option (Node's documented pattern). Node sends SIGTERM to the child on abort. The `ReadableStream`'s `cancel()` handler also kills the child so consumer-driven cancellation (via `response.body.cancel()`) is independent of the SDK's signal path.
 
 ## OAuth storage
 

@@ -8,6 +8,11 @@
 // cross-spawn only for shell-friendly tooling (LSP, MCP, etc.) and
 // the agy binary will be invoked with a fixed argv list, so the
 // pty-less spawn is sufficient and keeps the contract minimal.
+//
+// Future: Bun.spawn is available via the package's `types: ["bun"]`
+// tsconfig entry. Adopting it would simplify the wrapper (no node:stream
+// cast) but requires test-mock changes that are out of scope here —
+// see NODESPAWN-001 in CODE_REVIEW.md.
 
 import { spawn as nodeSpawn } from "node:child_process"
 import type { Readable } from "node:stream"
@@ -17,6 +22,7 @@ export type SpawnOptions = {
   env?: NodeJS.ProcessEnv | null
   signal?: AbortSignal
   timeout?: number
+  killSignal?: NodeJS.Signals
   stdio?: [unknown, "pipe" | "inherit" | "ignore", "pipe" | "inherit" | "ignore"]
   windowsHide?: boolean
 }
@@ -37,6 +43,7 @@ export const defaultSpawn: SpawnFn = (cmd, args, options) => {
     env: options.env === null ? undefined : options.env ? options.env : undefined,
     signal: options.signal,
     timeout: options.timeout,
+    killSignal: options.killSignal,
     windowsHide: options.windowsHide ?? process.platform === "win32",
     stdio: [stdin, stdout, stderr] as never,
   }) as unknown as {

@@ -10,7 +10,13 @@ function defaultAgyPath(): string {
   return path.join(os.homedir(), ".local", "bin", "agy")
 }
 
-export const AGY_DEFAULT_PATH = defaultAgyPath()
+// Evaluated lazily so changes to `process.env.LOCALAPPDATA` after module
+// load are picked up. Callers must invoke `getAgyDefaultPath()` each time —
+// do NOT cache the result in a module-level const (that would defeat the
+// purpose of lazy evaluation).
+export function getAgyDefaultPath(): string {
+  return defaultAgyPath()
+}
 
 // ===== Platform-specific install command (spawn arg-list form) =====
 // Each entry is an array that gets passed to Process.spawn (...) so we never

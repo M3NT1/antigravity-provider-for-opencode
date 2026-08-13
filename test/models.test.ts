@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test"
 import { PROVIDER_ID } from "../src/constants.js"
-import { MODEL_BY_SLUG, IMAGE_MODALITY, TEXT_MODALITY } from "../src/models.js"
+import { MODEL_BY_SLUG, IMAGE_MODALITY, TEXT_MODALITY, toModelV2Map } from "../src/models.js"
 import type { ModelSlug } from "../src/types.js"
 
 const ALL_SLUGS = Object.keys(MODEL_BY_SLUG) as ModelSlug[]
@@ -99,5 +99,38 @@ describe("MODEL_BY_SLUG", () => {
   it("modality constants are immutable singleton shapes", () => {
     expect(IMAGE_MODALITY).toEqual({ text: true, audio: false, image: true, video: false, pdf: false })
     expect(TEXT_MODALITY).toEqual({ text: true, audio: false, image: false, video: false, pdf: false })
+  })
+})
+
+describe("toModelV2Map (ASNEVER-001)", () => {
+  it("produces an entry for every ModelSlug with the same id key", () => {
+    const out = toModelV2Map(MODEL_BY_SLUG)
+    expect(Object.keys(out).toSorted()).toEqual(Object.keys(MODEL_BY_SLUG).toSorted())
+  })
+
+  it("preserves id, name, family, status, release_date from ModelEntry", () => {
+    const entry = MODEL_BY_SLUG["gemini-3.1-pro-high"]
+    const out = toModelV2Map(MODEL_BY_SLUG)
+    const mapped = out["gemini-3.1-pro-high"]!
+    expect(mapped.id).toBe(entry.id)
+    expect(mapped.name).toBe(entry.name)
+    expect(mapped.family).toBe(entry.family)
+    expect(mapped.status).toBe(entry.status)
+    expect(mapped.release_date).toBe(entry.release_date)
+  })
+
+  it("preserves the api.url pointing at @ai-sdk/google BUNDLED_PROVIDERS", () => {
+    const out = toModelV2Map(MODEL_BY_SLUG)
+    for (const model of Object.values(out)) {
+      expect(model.api.npm).toBe("@ai-sdk/google")
+    }
+  })
+
+  it("keeps cost = 0 (subscription billing)", () => {
+    const out = toModelV2Map(MODEL_BY_SLUG)
+    for (const model of Object.values(out)) {
+      expect(model.cost.input).toBe(0)
+      expect(model.cost.output).toBe(0)
+    }
   })
 })

@@ -9,13 +9,21 @@ import { defaultSpawn } from "../src/spawn.js"
 // lets us assert on argv / env / cwd / signal without shelling out.
 // Real child_process.spawn is synchronous and returns a ChildProcess
 // immediately, so the mock must be sync too.
-const spawnMock = mock(() => {
+//
+// The mock returns a valid version string on `--version` so that
+// preflight() in test/auth.test.ts (which uses defaultSpawn() which
+// uses this mock) succeeds; otherwise auth.test.ts would fail with
+// "unparseable version" because the mock's default empty stdout
+// doesn't match the version regex.
+const spawnMock = mock((_cmd: string, args: readonly string[]) => {
   const proc = new EventEmitter() as EventEmitter & {
     stdout: Readable | null
     stderr: Readable | null
     kill: (signal?: NodeJS.Signals) => boolean
   }
-  proc.stdout = Readable.from([])
+  proc.stdout = args.includes("--version")
+    ? Readable.from([Buffer.from("Antigravity CLI 99.0.0\n", "utf8")])
+    : Readable.from([])
   proc.stderr = Readable.from([])
   proc.kill = (_signal?: NodeJS.Signals) => true
   // emit exit on next tick so awaited code completes

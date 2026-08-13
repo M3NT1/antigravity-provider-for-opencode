@@ -31,7 +31,7 @@ import type { Hooks, PluginInput } from "@opencode-ai/plugin"
 import { preflight } from "./cli.js"
 import { install, installInstructionsForPlatform } from "./install.js"
 import { spawnAgyStream } from "./fetch-wrapper.js"
-import { MODEL_BY_SLUG } from "./models.js"
+import { MODEL_BY_SLUG, toModelV2Map } from "./models.js"
 import { AgyNotInstalledError, AgyAuthMissingError } from "./errors.js"
 import { defaultSpawn } from "./spawn.js"
 
@@ -74,7 +74,10 @@ function extractPrompt(body: unknown): string {
 function parseAiSdkGoogleUrl(url: string): { slug: string; method: string } | null {
   const match = url.match(/\/models\/([^:/?]+):([^:?]+)/)
   if (!match) return null
-  return { slug: match[1], method: match[2] }
+  // match[1] and match[2] are guaranteed non-null when match is non-null
+  // (the regex has two capture groups). The `!` is the standard
+  // noUncheckedIndexedAccess escape hatch for regex captures.
+  return { slug: match[1]!, method: match[2]! }
 }
 
 export const AntigravityProviderPlugin = async (_input: PluginInput): Promise<Hooks> => {
@@ -93,7 +96,7 @@ export const AntigravityProviderPlugin = async (_input: PluginInput): Promise<Ho
       id: ATTACHED_PROVIDER_ID,
       models: async () => {
         if (!binary) return {}
-        return MODEL_BY_SLUG as never
+        return toModelV2Map(MODEL_BY_SLUG)
       },
     },
     auth: {
@@ -102,6 +105,27 @@ export const AntigravityProviderPlugin = async (_input: PluginInput): Promise<Ho
         {
           label: "Install Antigravity CLI",
           type: "api",
+          // Pattern-6 finding: the Install CLI method previously had
+          // no `authorize` callback — the user would select it, see the
+          // confirmation prompt, but the actual install never ran.
+          // Adding `authorize` makes the install actually happen when
+          // the user confirms. We block until the install + preflight
+          // succeed so opencode stores a `key` (the agy binary path)
+          // only when the install is verified to work.
+          authorize: async () => {
+            const proc = install()
+            await proc.exited
+            // Verify the install actually produced a working binary.
+            const ok = await preflight().catch(() => null)
+            if (!ok) {
+              return { type: "failed" as const }
+            }
+            return {
+              type: "success" as const,
+              key: ok.binary,
+              metadata: { version: ok.version, source: "install" },
+            }
+          },
           prompts: [
             {
               type: "text",
@@ -111,30 +135,58 @@ export const AntigravityProviderPlugin = async (_input: PluginInput): Promise<Ho
           ],
         },
         {
-          label: "Sign in with Google",
+          label: "Sign in with Google (run `agy` first)",
           type: "oauth",
           authorize: async () => {
-            // Spawning agy in the foreground is delegated to the
-            // host (opencode). We return a placeholder URL; the
-            // actual browser flow is handled by the user's terminal
-            // session via the opencode UI.
+            // OAuth actually happens in the OS keyring via `agy`,
+            // not in this code path. The user runs `agy` in a
+            // terminal; that binary opens the browser, completes
+            // OAuth, and stores the refresh token in the OS
+            // keychain. This callback verifies that `agy` is
+            // installed and runnable before recording a marker.
+            // The placeholder tokens are intentional — the real
+            // OAuth state is in the OS keyring, never persisted to
+            // opencode's auth.json (see SECURITY.md).
             return {
               url: "https://accounts.google.com/o/oauth/v2/auth?provider=antigravity",
-              instructions: "Follow the browser flow to sign in. Your antigravity session will be cached in the OS keyring.",
+              instructions:
+                "Run `agy -p \"test\"` in a terminal first to complete the Google sign-in. " +
+                "The Antigravity CLI opens the browser, completes OAuth, and stores the refresh token " +
+                "in the OS keyring (Apple Keychain / Linux Secret Service / Windows Credential Manager). " +
+                "After a successful sign-in, return to opencode and confirm the session.",
               method: "auto" as const,
-              callback: async () => ({ type: "success" as const, refresh: "antigravity-managed", access: "antigravity-managed", expires: Date.now() + 3600 * 1000 }),
+              callback: async () => {
+                await preflight()
+                return {
+                  type: "success" as const,
+                  refresh: "antigravity-managed",
+                  access: "antigravity-managed",
+                  expires: Date.now() + 3600 * 1000,
+                }
+              },
             }
           },
         },
         {
-          label: "Use existing antigravity session",
+          label: "Use existing Antigravity session",
           type: "oauth",
           authorize: async () => {
             return {
               url: "https://accounts.google.com/o/oauth/v2/auth?provider=antigravity",
-              instructions: "Use this if you have already signed in via the antigravity CLI in another terminal.",
+              instructions:
+                "Use this if you have already signed in via the Antigravity CLI in another terminal. " +
+                "Verify by running `agy -p \"test\"` — if it returns a response without an auth error, " +
+                "the session is active and you can continue.",
               method: "auto" as const,
-              callback: async () => ({ type: "success" as const, refresh: "antigravity-managed", access: "antigravity-managed", expires: Date.now() + 3600 * 1000 }),
+              callback: async () => {
+                await preflight()
+                return {
+                  type: "success" as const,
+                  refresh: "antigravity-managed",
+                  access: "antigravity-managed",
+                  expires: Date.now() + 3600 * 1000,
+                }
+              },
             }
           },
         },
@@ -186,11 +238,19 @@ export const AntigravityProviderPlugin = async (_input: PluginInput): Promise<Ho
                 init.headers.delete("x-goog-api-key")
               } else if (Array.isArray(init.headers)) {
                 init.headers = init.headers.filter(
-                  ([k]) => k.toLowerCase() !== "authorization" && k.toLowerCase() !== "x-goog-api-key",
+                  ([k]) =>
+                    k !== undefined &&
+                    k.toLowerCase() !== "authorization" &&
+                    k.toLowerCase() !== "x-goog-api-key",
                 )
               } else {
+                // STRIP-001: handle both casings — `Headers` is case-
+                // insensitive but plain record types aren't. Match the
+                // opencode-google-code-assist/src/fetch.ts:99-114 pattern.
                 delete init.headers["authorization"]
-                delete (init.headers as Record<string, unknown>)["x-goog-api-key"]
+                delete init.headers["Authorization"]
+                delete init.headers["x-goog-api-key"]
+                delete init.headers["X-Goog-Api-Key"]
               }
             }
 
@@ -215,7 +275,12 @@ export const AntigravityProviderPlugin = async (_input: PluginInput): Promise<Ho
               return new Response("empty prompt", { status: 400 })
             }
 
-            return spawnAgyStream({ binary: agyBinary, prompt, slug: parsed.slug as never })
+            return spawnAgyStream({
+              binary: agyBinary,
+              prompt,
+              slug: parsed.slug as never,
+              signal: init?.signal ?? undefined,
+            })
           },
         }
       },

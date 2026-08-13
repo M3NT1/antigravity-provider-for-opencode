@@ -150,9 +150,9 @@ describe("preflight", () => {
   it("returns { binary, version } when installed", async () => {
     const bin = path.join(tmpHome, ".local", "bin", "agy")
     makeExecutable(bin)
-    const result = await preflight(fakeSpawn("agy 1.0.0\n", "", 0), "darwin", tmpHome, {})
+    const result = await preflight(fakeSpawn("agy 1.1.8\n", "", 0), "darwin", tmpHome, {})
     expect(result.binary).toBe(bin)
-    expect(result.version).toBe("1.0.0")
+    expect(result.version).toBe("1.1.8")
   })
 
   it("throws AgyNotInstalledError when binary is missing", async () => {
@@ -182,5 +182,98 @@ describe("preflight", () => {
       expect(err).toBeInstanceOf(AgyNotInstalledError)
       expect((err as AgyNotInstalledError).message).toContain("irm https://antigravity.google/cli/install.ps1")
     }
+  })
+
+  it("uses PATHEXT env when looking up agy on Windows", async () => {
+    // PATHEXT-001: respect user-customized PATHEXT (defaults to common
+    // extensions if unset). Empty string first to prefer exact match.
+    // On case-sensitive test filesystems the filename must match the
+    // PATHEXT case (Windows itself is case-insensitive in practice).
+    const dir = path.join(tmpHome, "bin")
+    fs.mkdirSync(dir, { recursive: true })
+    const bin = path.join(dir, "agy.CMD")
+    fs.writeFileSync(bin, "echo ok\n")
+    fs.chmodSync(bin, 0o755)
+    expect(
+      locateBinary("win32", tmpHome, {
+        PATH: dir,
+        PATHEXT: ".CMD;.EXE",
+      }),
+    ).toBe(bin)
+  })
+
+  it("falls back to default Windows PATHEXT order when PATHEXT is unset", async () => {
+    // The default order is .COM;.EXE;.BAT;.CMD;… — uppercase to match
+    // the vscode/varlock/orca convention. On case-sensitive test
+    // filesystems the filename must use the matching case.
+    const dir = path.join(tmpHome, "bin")
+    fs.mkdirSync(dir, { recursive: true })
+    const bin = path.join(dir, "agy.CMD")
+    fs.writeFileSync(bin, "echo ok\n")
+    fs.chmodSync(bin, 0o755)
+    expect(locateBinary("win32", tmpHome, { PATH: dir })).toBe(bin)
+  })
+
+  it("surfaces the antigravity-cli#53 workaround on SSH/CI + non-UTC", async () => {
+    // HEADLESS-001: when SSH/CI + non-UTC is detected AND verifyVersion
+    // fails, the error message must mention the upstream workaround.
+    // Provide an agy binary at the default path so locateBinary
+    // succeeds and we hit the verifyVersion / headless code path.
+    const savedTz = process.env["TZ"]
+    process.env["TZ"] = "Asia/Tokyo"
+    const bin = path.join(tmpHome, ".local", "bin", "agy")
+    makeExecutable(bin)
+    ;(os.homedir as () => string) = () => tmpHome
+    try {
+      const env = { ...process.env, SSH_CLIENT: "1" }
+      // fakeSpawn returns code 1 to simulate verifyVersion failure
+      // (agy runs but exits non-zero).
+      await preflight(fakeSpawn("noop", "", 1), "linux", tmpHome, env)
+      throw new Error("expected to throw")
+    } catch (err) {
+      expect(err).toBeInstanceOf(AgyNotInstalledError)
+      const msg = (err as AgyNotInstalledError).message
+      expect(msg).toContain("headless + non-UTC")
+      expect(msg).toContain("GEMINI_FORCE_FILE_STORAGE=true")
+      expect(msg).toContain("TZ=UTC")
+    } finally {
+      if (savedTz === undefined) delete process.env["TZ"]
+      else process.env["TZ"] = savedTz
+    }
+  })
+
+it("throws AgyNotInstalledError when agy version is below 1.1.8 (DOC-001)", async () => {
+    // DOC-001: the plugin requires agy >= 1.1.8 (introduced
+    // --output-format stream-json). The preflight parses the version
+    // output and rejects older versions.
+    const bin = path.join(tmpHome, ".local", "bin", "agy")
+    makeExecutable(bin)
+    ;(os.homedir as () => string) = () => tmpHome
+    try {
+      // fakeSpawn returns "1.0.0" + code 0 — version parse succeeds,
+      // but the semver check rejects the version.
+      await preflight(fakeSpawn("Antigravity CLI 1.0.0\n", "", 0), "linux", tmpHome, {})
+      throw new Error("expected to throw")
+    } catch (err) {
+      expect(err).toBeInstanceOf(AgyNotInstalledError)
+      const msg = (err as AgyNotInstalledError).message
+      expect(msg).toContain("1.0.0")
+      expect(msg).toContain("minimum required (1.1.8)")
+      expect(msg).toContain("upgrade agy to >= 1.1.8")
+    }
+  })
+
+  it("accepts agy versions >= 1.1.8 (DOC-001)", async () => {
+    const bin = path.join(tmpHome, ".local", "bin", "agy")
+    makeExecutable(bin)
+    ;(os.homedir as () => string) = () => tmpHome
+    const result = await preflight(
+      fakeSpawn("Antigravity CLI 1.1.8\n", "", 0),
+      "linux",
+      tmpHome,
+      {},
+    )
+    expect(result.binary).toBe(bin)
+    expect(result.version).toBe("1.1.8")
   })
 })
