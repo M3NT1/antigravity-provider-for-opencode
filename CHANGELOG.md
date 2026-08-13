@@ -14,11 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   helper + tail-flush in `start()`). Confirmed by `antigravitylab.net`
   documenting the "roughly 1 in 3 runs" failure rate on raw stdout NDJSON.
 - **AbortSignal propagation** — The AI SDK's `init.signal` is now forwarded
-  into the `agy` subprocess. On cancel, the plugin sends SIGTERM
-  immediately and escalates to SIGKILL after a 5s grace period. The
-  `ReadableStream` surfaces a real `AbortError` so the SDK does not hang
-  on mid-stream cancel (per `vercel/ai#15430`). The CHANGELOG entry
-  for 0.1.0 claimed this feature; it is now actually implemented.
+  into the `agy` subprocess via Node's `spawn({ signal })` option. The
+  `ReadableStream`'s `cancel()` handler kills the child on consumer-driven
+  cancellation. CHANGELOG 0.1.0 claimed this feature; it is now actually
+  implemented (per `vercel/ai#15430` the previous manual SIGTERM/SIGKILL
+  escalation was a hand-rolled workaround that didn't compose with the
+  SDK's `controller.error()` cleanup path).
 - **5-min timeout escalation** — Spawn `killSignal` is now `"SIGKILL"`,
   so the timeout fires even when `agy` traps SIGTERM (per Node docs on
   `child_process.spawn` timeout semantics).
@@ -29,7 +30,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **headless / TZ-skew detection** — `preflight` detects SSH/CI +
   non-UTC environments (the `antigravity-cli#53` silent failure mode)
   and surfaces the upstream workaround (`GEMINI_FORCE_FILE_STORAGE=true
-  TZ=UTC agy -p "test"`) before opencode stalls.
+  TZ=UTC agy -p "test"`) before opencode stalls. The headless branch
+  always wraps the underlying error with the workaround message
+  (previously the `if (err instanceof AgyNotInstalledError) throw err`
+  short-circuit skipped the surface, defeating the feature).
 - **OAuth callback stub** — The two `type: "oauth"` methods now run
   `preflight()` before returning marker tokens. Previously they returned
   success immediately, persisting placeholder `antigravity-managed`
@@ -38,6 +42,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `"Use existing antigravity session"` were renamed for clarity. The
   instructions now explain that OAuth happens via `agy` (OS keyring),
   not via a browser round-trip through this plugin.
+- **PATHEXT Windows fallback** — Previously the fallback was
+  `[".exe", ".cmd", ".bat"]` which was missing `.COM` (the first
+  extension Windows checks) and had wrong order. The new fallback
+  uses the canonical `.COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC`
+  order that matches vscode/orca/varlock convention.
+- **`AGY_DEFAULT_PATH` lazy const** — Previously exported BOTH a const
+  AND a function. The const defeated the lazy-evaluation purpose (it
+  was evaluated at module load). Removed the const; callers use
+  `getAgyDefaultPath()` only.
+- **Version detection: `--help` → semver** — The `--output-format
+  stream-json --help` exit-code probe is unreliable (many CLIs exit 0
+  for `--help` regardless of unknown flags). Replaced with a semver
+  parse of `agy --version` output, requiring `>= 1.1.8`. This also
+  unifies the two preflight checks (version + flag support) into one.
 
 ### Changed
 - **Subscription-only env strip** — Now applied at every spawn
@@ -50,6 +68,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fetch-override header strip now handles both casings
   (`authorization`/`Authorization`, `x-goog-api-key`/`X-Goog-Api-Key`)
   to match `opencode-google-code-assist/src/fetch.ts:99-114`.
+- **Install CLI auth method** — Now has an `authorize()` callback that
+  actually runs the platform install command and verifies the result
+  via `preflight()`. Previously selecting this method showed a
+  confirmation prompt but the install never ran.
+- **AbortSignal implementation** — Switched from hand-rolled
+  SIGTERM→SIGKILL escalation to Node's built-in `spawn({ signal })`
+  option, plus a `cancel()` handler on the `ReadableStream`. Per
+  Node PR #62450, mixing `controller.error()` with a manual kill
+  prevented the source's `cancel()` cleanup from running.
 
 ### Security
 - **Subscription-only invariant** — Documented as enforced at every
