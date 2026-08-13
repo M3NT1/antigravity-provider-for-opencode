@@ -2,7 +2,7 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "path"
 
-import { AGY_DEFAULT_PATH, installInstructionsForPlatform } from "./constants.js"
+import { getAgyDefaultPath, installInstructionsForPlatform } from "./constants.js"
 import { defaultSpawn, type SpawnFn } from "./spawn.js"
 import { AgyNotInstalledError } from "./errors.js"
 import { subscriptionOnlyEnv } from "./env.js"
@@ -38,15 +38,22 @@ function isExecutable(p: string): boolean {
   return (st.mode & 0o111) !== 0
 }
 
+// Windows default PATHEXT order — Windows checks these left-to-right
+// when a bare command is invoked. Matches vscode/orca/varlock convention
+// (microsoft/vscode/src/vs/base/node/processes.ts and following).
+const DEFAULT_WIN_PATHEXT = ".COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC"
+
 function which(bin: string, platform: NodeJS.Platform, env: NodeJS.ProcessEnv): string | null {
   const pathVar = env["PATH"]
   if (!pathVar) return null
   const dirs = pathVar.split(path.delimiter)
-  // PATHEXT-001: read PATHEXT on Windows (defaults to common executable
-  // extensions if unset). Empty string first to prefer exact match.
+  // PATHEXT-001: read PATHEXT on Windows (defaults to the canonical
+  // .COM;.EXE;.BAT;.CMD;… order if unset). Empty string first to
+  // prefer exact match. Do NOT re-sort — Windows relies on PATHEXT
+  // order to disambiguate same-name files with different extensions.
   const exts =
     platform === "win32"
-      ? ["", ...(env["PATHEXT"]?.split(";").filter(Boolean) ?? [".exe", ".cmd", ".bat"])]
+      ? ["", ...(env["PATHEXT"] ?? DEFAULT_WIN_PATHEXT).split(";").filter(Boolean)]
       : [""]
   for (const dir of dirs) {
     for (const ext of exts) {
@@ -127,7 +134,12 @@ export async function preflight(
     return verifyVersion(binary, spawnFn, subscriptionOnlyEnv(env)).then(
       (version) => ({ binary, version }),
       (err) => {
-        if (err instanceof AgyNotInstalledError) throw err
+        // HEADLESS-001: ALWAYS surface the upstream workaround in
+        // headless+non-UTC environments, regardless of whether the
+        // underlying error is already an AgyNotInstalledError (which
+        // verifyVersion always throws). The original short-circuit
+        // `if (err instanceof AgyNotInstalledError) throw err` skipped
+        // the workaround surface, defeating the entire feature.
         throw new AgyNotInstalledError(
           platform,
           `Detected headless + non-UTC environment (SSH/CI or container). ` +
@@ -147,27 +159,44 @@ export async function preflight(
   // spawn boundary, not just the model-call spawn.
   const version = await verifyVersion(binary, spawnFn, subscriptionOnlyEnv(env))
 
-  // DOC-001: verify the `agy` binary supports `--output-format stream-json`
-  // (introduced in 1.1.8). Older versions emit progress logs mixed with
-  // NDJSON events on stdout, corrupting the parser. Probe via `--help`.
-  await verifyStreamJsonFlag(binary, spawnFn)
+  // DOC-001: parse the semver output from `agy --version` and reject
+  // versions older than the minimum required (`>= 1.1.8`, which
+  // introduced `--output-format stream-json`). We probe the version
+  // (a deterministic output) rather than the `--help` exit code for a
+  // flag combination (`--output-format stream-json --help`) because
+  // many CLIs exit 0 for `--help` regardless of unknown flags.
+  await assertAgyVersionAtLeast(version, MIN_AGY_VERSION)
 
   return { binary, version }
 }
 
-async function verifyStreamJsonFlag(binary: string, spawnFn: SpawnFn): Promise<void> {
-  const child = spawnFn(binary, ["--output-format", "stream-json", "--help"], {
-    stdio: ["ignore", "pipe", "pipe"],
-    timeout: 5_000,
-    env: subscriptionOnlyEnv(),
-  })
-  await drain(child.stderr)
-  const code = await child.exited
-  if (code !== 0) {
+// Minimum supported `agy` version. Bump when the plugin requires newer
+// CLI features (e.g. when `--output-format stream-json` shipped in 1.1.8).
+const MIN_AGY_VERSION = "1.1.8"
+
+// Compare semver triples (major.minor.patch) — returns true if
+// `actual` >= `minimum`. Returns false on any parse failure so that
+// unknown version strings do not silently bypass the version check.
+function isAtLeast(actual: string, minimum: string): boolean {
+  const a = actual.split(".").map((n) => Number.parseInt(n, 10))
+  const m = minimum.split(".").map((n) => Number.parseInt(n, 10))
+  if (a.length !== 3 || m.length !== 3) return false
+  if (a.some((n) => !Number.isFinite(n)) || m.some((n) => !Number.isFinite(n))) return false
+  for (let i = 0; i < 3; i++) {
+    const an = a[i]!
+    const mn = m[i]!
+    if (an > mn) return true
+    if (an < mn) return false
+  }
+  return true
+}
+
+async function assertAgyVersionAtLeast(actual: string, minimum: string): Promise<void> {
+  if (!isAtLeast(actual, minimum)) {
     throw new AgyNotInstalledError(
       process.platform,
-      `Antigravity CLI at ${binary} does not support --output-format stream-json (exit ${code}). ` +
-        `Please upgrade agy to >= 1.1.8.\n\n${installInstructionsForPlatform()}`,
+      `Antigravity CLI version ${actual} is older than the minimum required (${minimum}). ` +
+        `Please upgrade agy to >= ${minimum}.\n\n${installInstructionsForPlatform()}`,
     )
   }
 }
@@ -180,5 +209,5 @@ function isNonUTC(): boolean {
   return new Date().getTimezoneOffset() !== 0
 }
 
-export { AGY_DEFAULT_PATH, defaultSpawn }
+export { getAgyDefaultPath, defaultSpawn }
 export type { SpawnFn } from "./spawn.js"

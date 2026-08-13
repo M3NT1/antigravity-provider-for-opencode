@@ -11,12 +11,12 @@ function defaultAgyPath(): string {
 }
 
 // Evaluated lazily so changes to `process.env.LOCALAPPDATA` after module
-// load are picked up on subsequent calls.
+// load are picked up. Callers must invoke `getAgyDefaultPath()` each time —
+// do NOT cache the result in a module-level const (that would defeat the
+// purpose of lazy evaluation).
 export function getAgyDefaultPath(): string {
   return defaultAgyPath()
 }
-
-export const AGY_DEFAULT_PATH = getAgyDefaultPath()
 
 // ===== Platform-specific install command (spawn arg-list form) =====
 // Each entry is an array that gets passed to Process.spawn (...) so we never
