@@ -8,6 +8,11 @@
 // cross-spawn only for shell-friendly tooling (LSP, MCP, etc.) and
 // the agy binary will be invoked with a fixed argv list, so the
 // pty-less spawn is sufficient and keeps the contract minimal.
+//
+// Future: Bun.spawn is available via the package's `types: ["bun"]`
+// tsconfig entry. Adopting it would simplify the wrapper (no node:stream
+// cast) but requires test-mock changes that are out of scope here —
+// see NODESPAWN-001 in CODE_REVIEW.md.
 
 import { spawn as nodeSpawn } from "node:child_process"
 import type { Readable } from "node:stream"

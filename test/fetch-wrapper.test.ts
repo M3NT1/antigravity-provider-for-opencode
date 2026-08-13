@@ -115,13 +115,13 @@ describe("spawnAgyStream", () => {
     // out-of-order or truncated by thinking models).
     expect(lines.length).toBe(1)
 
-    const chunk = parseSseData(lines[0]) as {
+    const chunk = parseSseData(lines[0]!) as {
       candidates: Array<{ content: { parts: Array<{ text?: string }>; role: string }; finishReason: string; index: number }>
       usageMetadata: { promptTokenCount: number; candidatesTokenCount: number; totalTokenCount: number }
     }
-    expect(chunk.candidates[0].content.parts[0].text).toBe("Hello world, this is the complete answer.")
-    expect(chunk.candidates[0].content.role).toBe("model")
-    expect(chunk.candidates[0].finishReason).toBe("STOP")
+    expect(chunk.candidates[0]!.content.parts[0]!.text).toBe("Hello world, this is the complete answer.")
+    expect(chunk.candidates[0]!.content.role).toBe("model")
+    expect(chunk.candidates[0]!.finishReason).toBe("STOP")
     expect(chunk.usageMetadata.promptTokenCount).toBe(10)
     expect(chunk.usageMetadata.candidatesTokenCount).toBe(7)
     expect(chunk.usageMetadata.totalTokenCount).toBe(17)
@@ -143,7 +143,7 @@ describe("spawnAgyStream", () => {
       spawnFn,
     })
     const lines = await readSse(response)
-    const chunk = JSON.parse(lines[0].slice("data: ".length))
+    const chunk = JSON.parse(lines[0]!.slice("data: ".length))
     expect(chunk.usageMetadata.thoughtsTokenCount).toBe(42)
   })
 
@@ -228,9 +228,9 @@ describe("spawnAgyStream", () => {
     // Exactly one chunk: the consolidated result.response text.
     // Unknown events are silently dropped.
     expect(lines.length).toBe(1)
-    const parsed = JSON.parse(lines[0].slice("data: ".length)) as { candidates: Array<{ content: { parts: Array<{ text?: string }> }; finishReason: string }> }
-    expect(parsed.candidates[0].content.parts[0].text).toBe("ok")
-    expect(parsed.candidates[0].finishReason).toBe("STOP")
+    const parsed = JSON.parse(lines[0]!.slice("data: ".length)) as { candidates: Array<{ content: { parts: Array<{ text?: string }> }; finishReason: string }> }
+    expect(parsed.candidates[0]!.content.parts[0]!.text).toBe("ok")
+    expect(parsed.candidates[0]!.finishReason).toBe("STOP")
   })
 
   it("strips subscription-only env vars from the spawned env", async () => {
@@ -301,11 +301,11 @@ describe("spawnAgyStream", () => {
     const lines = await readSse(response)
 
     expect(lines.length).toBe(1)
-    const chunk = parseSseData(lines[0]) as {
+    const chunk = parseSseData(lines[0]!) as {
       candidates: Array<{ content: { parts: Array<{ text?: string }>; role: string }; finishReason: string }>
     }
-    expect(chunk.candidates[0].content.parts[0].text).toBe("complete answer")
-    expect(chunk.candidates[0].finishReason).toBe("STOP")
+    expect(chunk.candidates[0]!.content.parts[0]!.text).toBe("complete answer")
+    expect(chunk.candidates[0]!.finishReason).toBe("STOP")
   })
 
   it("falls through to the no-result-event error when the trailing partial line is unparseable", async () => {

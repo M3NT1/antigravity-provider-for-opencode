@@ -93,7 +93,7 @@ export async function verifyVersion(
       `Antigravity CLI at ${binary} returned an unparseable version: ${JSON.stringify(text)}\n${installInstructionsForPlatform()}`,
     )
   }
-  return match[1]
+  return match[1]!
 }
 
 async function drain(stream: NodeJS.ReadableStream | null): Promise<string> {
