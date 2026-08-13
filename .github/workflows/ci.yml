@@ -20,6 +20,16 @@ jobs:
         with:
           bun-version: latest
 
+      # TMPDIR must point to a directory that allows executing the
+      # fake shell scripts written by `makeExecutable` in cli-locator
+      # tests. On some CI runners /tmp is mounted `noexec`, which would
+      # make the tests fail with "unparseable version" (the spawn
+      # succeeds but the script never runs). The GitHub Actions
+      # ${{ runner.temp }} directory is a writable, executable tmp
+      # space allocated per-job.
+      - name: Set TMPDIR
+        run: echo "TMPDIR=${{ runner.temp }}" >> "$GITHUB_ENV"
+
       - name: Install dependencies
         run: bun install --frozen-lockfile
 

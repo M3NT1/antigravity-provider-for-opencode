@@ -92,6 +92,7 @@ describe("AntigravityProviderPlugin", () => {
   })
 
   it("returns an empty model list when agy is not installed (graceful degrade)", async () => {
+    process.env["MOCK_PREFLIGHT_RESULT"] = "error"
     mockHomedir(tmpHome)
     process.env["PATH"] = "/nonexistent"
     const hooks = await AntigravityProviderPlugin({} as never)
@@ -103,6 +104,7 @@ describe("AntigravityProviderPlugin", () => {
   })
 
   it("auth.loader throws AgyNotInstalledError when agy is missing", async () => {
+    process.env["MOCK_PREFLIGHT_RESULT"] = "error"
     mockHomedir(tmpHome)
     process.env["PATH"] = "/nonexistent"
     const hooks = await AntigravityProviderPlugin({} as never)
@@ -111,6 +113,7 @@ describe("AntigravityProviderPlugin", () => {
   })
 
   it("auth.loader throws AgyNotInstalledError with the install command in the message", async () => {
+    process.env["MOCK_PREFLIGHT_RESULT"] = "error"
     mockHomedir(tmpHome)
     process.env["PATH"] = "/nonexistent"
     const hooks = await AntigravityProviderPlugin({} as never)
@@ -213,6 +216,7 @@ describe("AntigravityProviderPlugin", () => {
   })
 
   it("OAuth callback throws AgyNotInstalledError when agy is missing", async () => {
+    process.env["MOCK_PREFLIGHT_RESULT"] = "error"
     mockHomedir(tmpHome)
     process.env["PATH"] = "/nonexistent"
     const hooks = await AntigravityProviderPlugin({} as never)
