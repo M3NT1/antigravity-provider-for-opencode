@@ -1,2 +1,9 @@
 [test]
-env = { NODE_ENV = "test" }
+# NODE_ENV = "test" so tests run with prod-like behavior but
+# distinguishable from runtime.
+# TZ = "UTC" forces a non-DST timezone for deterministic tests — without
+# this, CI runners on non-UTC timezones (e.g. GitHub Actions' default
+# America/Los_Angeles) trigger the HEADLESS-001 headless+non-UTC
+# detection in preflight(), which throws and breaks the model-list
+# tests even when the local test setup is correct.
+env = { NODE_ENV = "test", TZ = "UTC" }
