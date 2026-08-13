@@ -105,6 +105,27 @@ export const AntigravityProviderPlugin = async (_input: PluginInput): Promise<Ho
         {
           label: "Install Antigravity CLI",
           type: "api",
+          // Pattern-6 finding: the Install CLI method previously had
+          // no `authorize` callback — the user would select it, see the
+          // confirmation prompt, but the actual install never ran.
+          // Adding `authorize` makes the install actually happen when
+          // the user confirms. We block until the install + preflight
+          // succeed so opencode stores a `key` (the agy binary path)
+          // only when the install is verified to work.
+          authorize: async () => {
+            const proc = install()
+            await proc.exited
+            // Verify the install actually produced a working binary.
+            const ok = await preflight().catch(() => null)
+            if (!ok) {
+              return { type: "failed" as const }
+            }
+            return {
+              type: "success" as const,
+              key: ok.binary,
+              metadata: { version: ok.version, source: "install" },
+            }
+          },
           prompts: [
             {
               type: "text",
