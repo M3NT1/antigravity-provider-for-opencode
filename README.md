@@ -63,7 +63,7 @@ In opencode:
 ```
 /connect
 → Antigravity
-→ Use existing antigravity session
+→ Use existing Antigravity session
 ```
 
 Then select a model:
@@ -71,6 +71,12 @@ Then select a model:
 ```
 /model antigravity/gemini-3.1-pro-high
 ```
+
+### Requirements
+
+The plugin requires **`agy` >= 1.1.8** (released 2026-06-09). Earlier versions do not implement the `--output-format stream-json` flag that the plugin relies on for NDJSON streaming. The preflight verifies this and surfaces an actionable `AgyNotInstalledError` with upgrade instructions.
+
+For Google AI Pro / Ultra subscribers, OAuth happens via `agy`'s built-in browser flow. The plugin does not see the refresh token — it lives in the OS keyring (Apple Keychain / Linux Secret Service / Windows Credential Manager).
 
 ## Architecture
 
