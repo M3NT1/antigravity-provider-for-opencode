@@ -1,5 +1,6 @@
 import { PROVIDER_ID } from "./constants.js"
 import type { ModelEntry, ModelSlug } from "./types.js"
+import type { Model as ModelV2 } from "@opencode-ai/sdk/v2"
 
 // Conservative defaults sourced from the Antigravity docs /pages
 // (models.md) and the gemini-cli CCPA fallbacks. Cost is 0 because
@@ -182,3 +183,36 @@ export const MODEL_BY_SLUG: Record<ModelSlug, ModelEntry> = {
 
 // Test file imports these directly via `../src/models.js`; no re-export needed.
 export { TEXT_MODALITY, IMAGE_MODALITY }
+
+// ASNEVER-001: typed mapper from our domain `ModelEntry` to the SDK's
+// `ModelV2` shape. The previous `as never` cast hid the type-system
+// boundary; the boundary still exists because the SDK brands
+// `ProviderV2.ID` and `ModelV2.ID` which we cannot produce locally.
+// opencode core overrides both branded fields per entry at
+// `packages/opencode/src/provider/provider.ts:1417` before downstream
+// consumption, so the cast is safe at this boundary.
+function toModelV2(entry: ModelEntry): ModelV2 {
+  return {
+    id: entry.id,
+    providerID: entry.providerID,
+    api: entry.api,
+    name: entry.name,
+    family: entry.family,
+    capabilities: entry.capabilities as ModelV2["capabilities"],
+    cost: entry.cost as ModelV2["cost"],
+    limit: entry.limit as ModelV2["limit"],
+    status: entry.status,
+    headers: entry.headers,
+    options: entry.options as ModelV2["options"],
+    release_date: entry.release_date,
+    variants: {} as ModelV2["variants"],
+  }
+}
+
+export function toModelV2Map(entries: Record<string, ModelEntry>): Record<string, ModelV2> {
+  const out: Record<string, ModelV2> = {}
+  for (const [id, entry] of Object.entries(entries)) {
+    out[id] = toModelV2(entry)
+  }
+  return out
+}

@@ -31,7 +31,7 @@ import type { Hooks, PluginInput } from "@opencode-ai/plugin"
 import { preflight } from "./cli.js"
 import { install, installInstructionsForPlatform } from "./install.js"
 import { spawnAgyStream } from "./fetch-wrapper.js"
-import { MODEL_BY_SLUG } from "./models.js"
+import { MODEL_BY_SLUG, toModelV2Map } from "./models.js"
 import { AgyNotInstalledError, AgyAuthMissingError } from "./errors.js"
 import { defaultSpawn } from "./spawn.js"
 
@@ -74,7 +74,10 @@ function extractPrompt(body: unknown): string {
 function parseAiSdkGoogleUrl(url: string): { slug: string; method: string } | null {
   const match = url.match(/\/models\/([^:/?]+):([^:?]+)/)
   if (!match) return null
-  return { slug: match[1], method: match[2] }
+  // match[1] and match[2] are guaranteed non-null when match is non-null
+  // (the regex has two capture groups). The `!` is the standard
+  // noUncheckedIndexedAccess escape hatch for regex captures.
+  return { slug: match[1]!, method: match[2]! }
 }
 
 export const AntigravityProviderPlugin = async (_input: PluginInput): Promise<Hooks> => {
@@ -93,7 +96,7 @@ export const AntigravityProviderPlugin = async (_input: PluginInput): Promise<Ho
       id: ATTACHED_PROVIDER_ID,
       models: async () => {
         if (!binary) return {}
-        return MODEL_BY_SLUG as never
+        return toModelV2Map(MODEL_BY_SLUG)
       },
     },
     auth: {
@@ -214,7 +217,10 @@ export const AntigravityProviderPlugin = async (_input: PluginInput): Promise<Ho
                 init.headers.delete("x-goog-api-key")
               } else if (Array.isArray(init.headers)) {
                 init.headers = init.headers.filter(
-                  ([k]) => k.toLowerCase() !== "authorization" && k.toLowerCase() !== "x-goog-api-key",
+                  ([k]) =>
+                    k !== undefined &&
+                    k.toLowerCase() !== "authorization" &&
+                    k.toLowerCase() !== "x-goog-api-key",
                 )
               } else {
                 // STRIP-001: handle both casings — `Headers` is case-
