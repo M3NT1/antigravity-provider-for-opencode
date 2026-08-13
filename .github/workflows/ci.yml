@@ -22,13 +22,13 @@ jobs:
 
       # TMPDIR must point to a directory that allows executing the
       # fake shell scripts written by `makeExecutable` in cli-locator
-      # tests. On some CI runners /tmp is mounted `noexec`, which would
-      # make the tests fail with "unparseable version" (the spawn
-      # succeeds but the script never runs). The GitHub Actions
-      # ${{ runner.temp }} directory is a writable, executable tmp
-      # space allocated per-job.
+      # tests. On some CI runners the default /tmp and ${{ runner.temp }}
+      # are mounted `noexec`, which would make the tests fail with
+      # "unparseable version" (the spawn succeeds but the script
+      # never runs). We point TMPDIR at the repo workspace, which is
+      # always writable and executable.
       - name: Set TMPDIR
-        run: echo "TMPDIR=${{ runner.temp }}" >> "$GITHUB_ENV"
+        run: echo "TMPDIR=$GITHUB_WORKSPACE/.tmp" >> "$GITHUB_ENV" && mkdir -p "$GITHUB_WORKSPACE/.tmp"
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
