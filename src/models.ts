@@ -180,6 +180,5 @@ export const MODEL_BY_SLUG: Record<ModelSlug, ModelEntry> = {
   },
 }
 
-// silence "unused" lint by re-exporting the modality constants so the
-// test file can assert against them per-model.
+// Test file imports these directly via `../src/models.js`; no re-export needed.
 export { TEXT_MODALITY, IMAGE_MODALITY }
