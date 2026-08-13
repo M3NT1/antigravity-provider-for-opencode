@@ -34,9 +34,8 @@
   },
   "dependencies": {
     "@ai-sdk/provider": "^3.0.8",
-    "@opencode-ai/core": "workspace:*",
-    "@opencode-ai/plugin": "workspace:*",
-    "@opencode-ai/sdk": "workspace:*"
+    "@opencode-ai/plugin": "^1.18.18",
+    "@opencode-ai/sdk": "^1.18.18"
   },
   "devDependencies": {
     "@tsconfig/node22": "22.0.2",
