@@ -128,35 +128,17 @@ export function spawnAgyStream(opts: SpawnAgyOptions): Response {
         controller.enqueue(chunk)
       }
 
-      // Wire the abort signal to the controller so vercel/ai#15430
-      // does not hang the SDK. When the user cancels, we escalate
-      // SIGTERM → SIGKILL after a 5s grace period and surface a real
-      // error to the consumer (rather than silently closing).
-      const sig = opts.signal
-      if (sig) {
-        if (sig.aborted) {
-          child.kill("SIGTERM")
-        } else {
-          const onAbort = () => {
-            child.kill("SIGTERM")
-            setTimeout(() => {
-              try {
-                child.kill("SIGKILL")
-              } catch {
-                /* already gone */
-              }
-              try {
-                controller.error(
-                  new DOMException("The user aborted a request.", "AbortError"),
-                )
-              } catch {
-                /* controller already closed */
-              }
-            }, 5_000)
-            sig.removeEventListener("abort", onAbort)
-          }
-          sig.addEventListener("abort", onAbort, { once: true })
-        }
+      // ABORT-001: the `signal` option on spawn is the documented Node
+      // way to abort a child — Node sends SIGTERM and the AbortError is
+      // delivered to the parent's await. We only add a `cancel()`
+      // handler on the stream to surface a real error to the SDK
+      // (otherwise vercel/ai#15430 hangs silently on mid-stream abort).
+      // We deliberately do NOT use `controller.error()` from an abort
+      // listener — per Node PR #62450, mixing `controller.error()` with
+      // a manual kill prevents the source's `cancel()` cleanup from
+      // running. The `cancel()` handler below is the correct path.
+      if (opts.signal?.aborted) {
+        child.kill("SIGTERM")
       }
 
       try {
@@ -243,6 +225,18 @@ export function spawnAgyStream(opts: SpawnAgyOptions): Response {
         emit(sseError(message))
         finished = true
         controller.close()
+      }
+    },
+    // ABORT-001: when the consumer (AI SDK) cancels the stream, kill
+    // the child so it doesn't linger until the 5-min timeout. The
+    // Node `spawn({ signal })` option also kills on `opts.signal`
+    // abort, but consumer-driven cancellation (via `response.body.cancel()`)
+    // is independent of `opts.signal` and must be handled here.
+    cancel() {
+      try {
+        child.kill("SIGTERM")
+      } catch {
+        /* already gone */
       }
     },
   })
