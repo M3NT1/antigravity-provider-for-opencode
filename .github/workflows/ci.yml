@@ -31,4 +31,3 @@ jobs:
 
       - name: Lint (oxlint)
         run: bun run lint
-        continue-on-error: true
