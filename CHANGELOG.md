@@ -68,6 +68,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`suspicious: warn` + key type-aware rules). Previously only the
   default `correctness` category was active; the new config flags
   real bugs (e.g. unused variables, no-unused-vars in tests).
+- **`noUncheckedIndexedAccess`** — Enabled in `tsconfig.json`. Catches
+  the silent "array access returns `undefined`" class of bugs at
+  type-check time. Updated `auth.ts`, `cli.ts`, and the test files
+  to add explicit non-null assertions at the documented invariant
+  points (regex captures, split+filter tuples).
+
+### Refactored
+- **`as never` → typed `toModelV2Map`** (ASNEVER-001) — The previous
+  `as never` cast at `auth.ts:96` hid the boundary between our domain
+  `ModelEntry` type and the SDK's `ModelV2` shape. Replaced with a
+  typed mapper (`models.ts` `toModelV2` + `toModelV2Map`) that makes
+  the boundary explicit and documented. opencode core still overrides
+  the branded `ProviderV2.ID` / `ModelV2.ID` fields per entry at
+  `packages/opencode/src/provider/provider.ts:1417`.
+- **`bunSpawnImpl` documented as future work** (NODESPAWN-001) —
+  Initially implemented but reverted because the Bun.spawn test
+  mock strategy does not fit the existing `mock.module("node:child_process", ...)`
+  pattern. The Bun.spawn option requires a parallel test infrastructure
+  that is out of scope for this fix batch. The package's tsconfig
+  still has `types: ["bun"]`, so Bun globals remain available.
 
 ### Code review
 - Added `CODE_REVIEW.md` — deep research-validated review (6 parallel
